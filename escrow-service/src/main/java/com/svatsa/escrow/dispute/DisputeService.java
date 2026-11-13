@@ -12,6 +12,8 @@ import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.Leg;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.PostingRequest;
+import com.svatsa.escrow.outbox.OutboxWriter;
+import com.svatsa.escrow.outbox.events.Events;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,7 @@ public class DisputeService {
     private final ProjectRepository projectRepository;
     private final AccountRepository accountRepository;
     private final LedgerService ledgerService;
+    private final OutboxWriter outboxWriter;
     private final int feeBps;
 
     public DisputeService(
@@ -39,6 +42,7 @@ public class DisputeService {
         ProjectRepository projectRepository,
         AccountRepository accountRepository,
         LedgerService ledgerService,
+        OutboxWriter outboxWriter,
         EscrowConfigurationProperties config
     ) {
         this.disputeRepository = disputeRepository;
@@ -46,6 +50,7 @@ public class DisputeService {
         this.projectRepository = projectRepository;
         this.accountRepository = accountRepository;
         this.ledgerService = ledgerService;
+        this.outboxWriter = outboxWriter;
         this.feeBps = config.getFeeBps();
     }
 
@@ -127,6 +132,22 @@ public class DisputeService {
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             throw new DisputeAlreadyOpenException(milestoneId);
         }
+
+        // Emit DisputeOpened event
+        outboxWriter.write(
+            "Dispute",
+            dispute.id().toString(),
+            "DisputeOpened",
+            "escrow.milestone-events",
+            new Events.DisputeOpened(
+                dispute.id(),
+                milestoneId,
+                project.id(),
+                openedBy,
+                openedByRole,
+                reason
+            )
+        );
 
         return dispute;
     }
@@ -257,5 +278,21 @@ public class DisputeService {
                 MilestoneState.RESOLVED
             );
         }
+
+        // Emit DisputeResolved event
+        outboxWriter.write(
+            "Dispute",
+            disputeId.toString(),
+            "DisputeResolved",
+            "escrow.milestone-events",
+            new Events.DisputeResolved(
+                disputeId,
+                dispute.milestoneId(),
+                milestone.projectId(),
+                freelancerSharePaise,
+                clientSharePaise,
+                fee
+            )
+        );
     }
 }

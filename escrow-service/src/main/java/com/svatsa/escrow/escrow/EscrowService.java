@@ -6,6 +6,8 @@ import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.Leg;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.PostingRequest;
+import com.svatsa.escrow.outbox.OutboxWriter;
+import com.svatsa.escrow.outbox.events.Events;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -30,6 +32,7 @@ public class EscrowService {
     private final MilestoneRepository milestoneRepository;
     private final AccountRepository accountRepository;
     private final LedgerService ledgerService;
+    private final OutboxWriter outboxWriter;
     private final Clock clock;
     private final int feeBps;
 
@@ -39,6 +42,7 @@ public class EscrowService {
         MilestoneRepository milestoneRepository,
         AccountRepository accountRepository,
         LedgerService ledgerService,
+        OutboxWriter outboxWriter,
         Clock clock,
         EscrowConfigurationProperties config
     ) {
@@ -47,6 +51,7 @@ public class EscrowService {
         this.milestoneRepository = milestoneRepository;
         this.accountRepository = accountRepository;
         this.ledgerService = ledgerService;
+        this.outboxWriter = outboxWriter;
         this.clock = clock;
         this.feeBps = config.getFeeBps();
     }
@@ -173,6 +178,15 @@ public class EscrowService {
                 }
             }
         }
+
+        // Emit ProjectFunded event
+        outboxWriter.write(
+            "Project",
+            projectId.toString(),
+            "ProjectFunded",
+            "escrow.milestone-events",
+            new Events.ProjectFunded(projectId, totalAmount)
+        );
     }
 
     /**
@@ -205,6 +219,19 @@ public class EscrowService {
                 MilestoneState.SUBMITTED
             );
         }
+
+        // Emit MilestoneSubmitted event
+        outboxWriter.write(
+            "Milestone",
+            milestoneId.toString(),
+            "MilestoneSubmitted",
+            "escrow.milestone-events",
+            new Events.MilestoneSubmitted(
+                milestoneId,
+                milestone.projectId(),
+                milestone.amountPaise()
+            )
+        );
     }
 
     /**
@@ -297,6 +324,36 @@ public class EscrowService {
                 MilestoneState.RELEASED
             );
         }
+
+        // Emit MilestoneApproved event
+        outboxWriter.write(
+            "Milestone",
+            milestoneId.toString(),
+            "MilestoneApproved",
+            "escrow.milestone-events",
+            new Events.MilestoneApproved(
+                milestoneId,
+                milestone.projectId(),
+                milestone.amountPaise()
+            )
+        );
+
+        // Emit MilestoneReleased event
+        outboxWriter.write(
+            "Milestone",
+            milestoneId.toString(),
+            "MilestoneReleased",
+            "escrow.milestone-events",
+            new Events.MilestoneReleased(
+                milestoneId,
+                milestone.projectId(),
+                project.freelancerId(),
+                milestone.amountPaise(),
+                fee,
+                freelancerAmount,
+                false // not auto-released
+            )
+        );
     }
 
     /**
@@ -326,6 +383,19 @@ public class EscrowService {
                     MilestoneState.CANCELLED
                 );
             }
+
+            // Emit MilestoneCancelled event
+            outboxWriter.write(
+                "Milestone",
+                milestoneId.toString(),
+                "MilestoneCancelled",
+                "escrow.milestone-events",
+                new Events.MilestoneCancelled(
+                    milestoneId,
+                    milestone.projectId(),
+                    milestone.amountPaise()
+                )
+            );
 
             return;
         }
@@ -396,6 +466,33 @@ public class EscrowService {
                     MilestoneState.REFUNDED
                 );
             }
+
+            // Emit MilestoneCancelled event
+            outboxWriter.write(
+                "Milestone",
+                milestoneId.toString(),
+                "MilestoneCancelled",
+                "escrow.milestone-events",
+                new Events.MilestoneCancelled(
+                    milestoneId,
+                    milestone.projectId(),
+                    milestone.amountPaise()
+                )
+            );
+
+            // Emit MilestoneRefunded event
+            outboxWriter.write(
+                "Milestone",
+                milestoneId.toString(),
+                "MilestoneRefunded",
+                "escrow.milestone-events",
+                new Events.MilestoneRefunded(
+                    milestoneId,
+                    milestone.projectId(),
+                    project.clientId(),
+                    milestone.amountPaise()
+                )
+            );
 
             return;
         }

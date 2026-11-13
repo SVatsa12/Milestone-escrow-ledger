@@ -1,0 +1,2 @@
+-- Initial schema placeholder
+-- Actual ledger schema comes in V1__ledger.sql

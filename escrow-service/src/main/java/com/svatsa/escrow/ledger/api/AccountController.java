@@ -9,7 +9,6 @@ import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.PostingRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -52,7 +51,6 @@ public class AccountController {
      * Create a new account (ADMIN only).
      */
     @PostMapping("/accounts")
-    @Transactional
     public ResponseEntity<Account> createAccount(
         @RequestBody CreateAccountRequest request
     ) {
@@ -89,7 +87,6 @@ public class AccountController {
      * Transfer money between accounts (ADMIN only, idempotent).
      */
     @PostMapping("/transfers")
-    @Transactional
     public ResponseEntity<Map<String, Object>> transfer(
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody TransferRequest request
@@ -137,7 +134,6 @@ public class AccountController {
      * Simulate a deposit (for dev/testing only, idempotent).
      */
     @PostMapping("/admin/deposits/simulate")
-    @Transactional
     public ResponseEntity<Map<String, Object>> simulateDeposit(
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody SimulateDepositRequest request

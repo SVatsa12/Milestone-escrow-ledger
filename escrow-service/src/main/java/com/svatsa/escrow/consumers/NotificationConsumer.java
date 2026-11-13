@@ -9,6 +9,7 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -36,10 +37,12 @@ public class NotificationConsumer {
 
     private final IdempotentConsumerSupport dedup;
     private final NotificationRepository notificationRepository;
+    private final Clock clock;
 
-    public NotificationConsumer(IdempotentConsumerSupport dedup, NotificationRepository notificationRepository) {
+    public NotificationConsumer(IdempotentConsumerSupport dedup, NotificationRepository notificationRepository, Clock clock) {
         this.dedup = dedup;
         this.notificationRepository = notificationRepository;
+        this.clock = clock;
     }
 
     /**
@@ -83,7 +86,7 @@ public class NotificationConsumer {
         String milestoneTitle = payload.get("milestoneTitle").asText();
 
         // Calculate auto-release date
-        Instant submittedAt = Instant.now();
+        Instant submittedAt = clock.instant();
         LocalDate autoReleaseDate = submittedAt
             .atZone(ZoneId.of("Asia/Kolkata"))
             .toLocalDate()

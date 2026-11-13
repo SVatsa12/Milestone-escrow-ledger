@@ -1,6 +1,7 @@
 package com.svatsa.escrow.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -38,6 +39,7 @@ public class OutboxRelay {
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
     private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
+    private final Clock clock;
 
     @Value("${escrow.outbox.relay.batch-size:100}")
     private int batchSize;
@@ -47,13 +49,15 @@ public class OutboxRelay {
         KafkaTemplate<String, String> kafkaTemplate,
         ObjectMapper objectMapper,
         TransactionTemplate transactionTemplate,
-        io.micrometer.core.instrument.MeterRegistry meterRegistry
+        io.micrometer.core.instrument.MeterRegistry meterRegistry,
+        Clock clock
     ) {
         this.jdbcClient = jdbcClient;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
         this.transactionTemplate = transactionTemplate;
         this.meterRegistry = meterRegistry;
+        this.clock = clock;
     }
 
     /**
@@ -119,7 +123,7 @@ public class OutboxRelay {
                 1, // schemaVersion
                 row.aggregateType(),
                 row.aggregateId(),
-                Instant.now(),
+                clock.instant(),
                 objectMapper.readTree(row.payload())
             );
 
@@ -156,7 +160,7 @@ public class OutboxRelay {
                 600_000 // 10 minutes
             );
 
-            Instant nextCheckAt = Instant.now().plusMillis(delayMs);
+            Instant nextCheckAt = clock.instant().plusMillis(delayMs);
             String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
 
             jdbcClient.sql("""

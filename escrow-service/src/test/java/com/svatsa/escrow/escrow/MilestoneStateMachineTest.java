@@ -13,7 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
  * Tests all 81 state pairs (9x9) to verify the state transition rules.
  * Only 10 transitions are valid; the rest must be rejected.
  */
-@DisplayName("MilestoneStateMachine")
+@DisplayName("MilestoneStateMachine Unit Test")
 class MilestoneStateMachineTest {
 
     @Test

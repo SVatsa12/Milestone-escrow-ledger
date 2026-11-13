@@ -90,7 +90,17 @@ public final class Events {
     ) {
     }
 
-    // ============ Ledger Events (ledger.entry-events) ============
+    // ============ Payment Events (escrow.payment-events) ============
+
+    public record DepositCaptured(
+        @JsonProperty("deposit_id") Long depositId,
+        @JsonProperty("client_id") Long clientId,
+        @JsonProperty("amount_paise") Long amountPaise,
+        @JsonProperty("payment_id") String paymentId,
+        @JsonProperty("order_id") String orderId,
+        @JsonProperty("entry_id") Long entryId
+    ) {
+    }
 
     public record LedgerEntryPosted(
         @JsonProperty("entry_id") Long entryId,

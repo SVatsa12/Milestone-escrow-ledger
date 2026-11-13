@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: escrow
+      POSTGRES_USER: escrow
+      POSTGRES_PASSWORD: escrow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U escrow -d escrow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - escrow-network
+
+  kafka:
+    image: apache/kafka:latest
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092 | grep -q ApiVersion"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - escrow-network
+    depends_on:
+      - postgres
+
+  kafka-init:
+    image: apache/kafka:latest
+    entrypoint: /bin/sh
+    command: |
+      -c '
+      echo "Waiting for Kafka to be ready..."
+      kafka-broker-api-versions.sh --bootstrap-server kafka:29092 || exit 1
+      
+      echo "Creating topics..."
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic escrow.milestone-events --partitions 3 --replication-factor 1 --if-not-exists
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic escrow.milestone-events.DLT --partitions 1 --replication-factor 1 --if-not-exists
+      
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic escrow.payment-events --partitions 3 --replication-factor 1 --if-not-exists
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic escrow.payment-events.DLT --partitions 1 --replication-factor 1 --if-not-exists
+      
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic ledger.entry-events --partitions 3 --replication-factor 1 --if-not-exists
+      kafka-topics.sh --create --bootstrap-server kafka:29092 --topic ledger.entry-events.DLT --partitions 1 --replication-factor 1 --if-not-exists
+      
+      echo "Topics created."
+      '
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - escrow-network
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - escrow-network
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.5.0
+    ports:
+      - "8474:8474"
+      - "15432:15432"
+      - "19090:19090"
+    networks:
+      - escrow-network
+    command: >
+      -config /config/toxiproxy.json
+    volumes:
+      - ./toxiproxy-config.json:/config/toxiproxy.json:ro
+    depends_on:
+      - postgres
+
+  mock-payout-provider:
+    build:
+      context: ./mock-payout-provider
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: escrow
+      DB_PASSWORD: escrow
+      SPRING_PROFILES_ACTIVE: ""
+    ports:
+      - "9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - escrow-network
+    profiles:
+      - app
+
+  escrow-service:
+    build:
+      context: ./escrow-service
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/escrow
+      SPRING_DATASOURCE_USERNAME: escrow
+      SPRING_DATASOURCE_PASSWORD: escrow
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PAYOUT_PROVIDER_URL: http://mock-payout-provider:9090
+      SPRING_PROFILES_ACTIVE: ""
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - escrow-network
+    profiles:
+      - app
+
+volumes:
+  postgres_data:
+
+networks:
+  escrow-network:
+    driver: bridge

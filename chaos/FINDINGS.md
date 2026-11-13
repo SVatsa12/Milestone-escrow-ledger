@@ -1,0 +1,123 @@
+# Chaos findings
+
+Scenarios C2 and C3 were the first tests in this repo to run the service against a real
+Postgres (Testcontainers + Toxiproxy). Until then the default test profile was H2 with Flyway
+off, and 47 of 48 integration tests were `@Disabled`. So some of these bugs are "never ran on
+Postgres" bugs that chaos surfaced as a side effect. Others only show up under faults or
+concurrency. Each fixed bug has a regression IT outside the `chaos` tag:
+
+- `payouts/PayoutSagaRegressionIT`
+- `ledger/api/TransferIdempotencyRegressionIT`
+
+## Bugs found by chaos
+
+### 1. Payout deadlock despite ascending lock order (invariant 7)
+- **Found by:** C2. Concurrent payouts from one wallet failed with `deadlock detected`.
+- **Root cause:** `requestPayout` inserted the `payouts` row *before* `LedgerService.post`.
+  That row has `FOREIGN KEY (wallet_account_id) REFERENCES accounts(id)`, and the FK check
+  takes a `FOR KEY SHARE` lock on the wallet row. So the real lock order was
+  wallet(KEY SHARE) → PAYOUT_IN_FLIGHT(UPDATE) → wallet(UPDATE), not ascending id order.
+  - Tx A holds wallet KEY SHARE and waits for PAYOUT_IN_FLIGHT.
+  - Tx B holds PAYOUT_IN_FLIGHT and waits to upgrade to FOR UPDATE on the wallet, which
+    conflicts with A's KEY SHARE.
+  - Deadlock.
+- **Fix:** post the reservation first (ordered `FOR UPDATE` locks), then insert the payout row.
+  The FK check then finds a row this transaction already holds.
+- **Lesson:** "lock in ascending order" has to include *implicit* locks such as FK checks.
+  Any flow that inserts a row referencing an account before calling `post()` has the same
+  hazard (worth auditing the escrow and dispute flows).
+- **Regression:** `concurrentPayoutsFromOneWalletDoNotDeadlock`. It was verified to fail with
+  `deadlock detected` when the old insert order is put back.
+
+### 2. Payout provider called inside the reservation transaction
+- **Found by:** building C2. A connection reset after the provider has paid must leave a
+  durable RESERVED/UNKNOWN row, and it did not.
+- **Root cause:** `requestPayout` was `@Transactional` and called the provider inside that
+  transaction. `confirmPayout` / `reversePayout` / `transitionToUnknown` were self-invoked, and
+  two were `private`, so their `@Transactional` did nothing (no proxy). Consequences:
+  - T1 was not committed when the provider was told to pay. A crash after the provider call
+    (`AFTER_PROVIDER_CALL`) would roll back the reservation while the provider had paid.
+    That is money out, with no ledger record.
+  - The `PAYOUT_IN_FLIGHT` row lock was held across a 2s HTTP call, which serialises all
+    payouts.
+  - Confirm and reverse were not atomic on their own.
+- **Fix:** explicit `TransactionTemplate` boundaries. T1 commits, then one provider call, then T2.
+  Settling is one conditional update from any non-terminal state (`PayoutRepository.settle`),
+  so the inline path and the recovery job can't both settle.
+- **Regression:** `reservationIsDurableBeforeProviderCall`. The fake provider reads the DB on
+  another connection at the moment the POST arrives and must see `RESERVED`.
+
+### 3. Provider never received the idempotency key
+- **Found by:** C2.
+- **Root cause:** `PayoutProviderClient` POSTed `{beneficiary, amountPaise}` with no
+  `X-Payout-Idempotency-Key`. The provider could not dedupe, and the recovery job's
+  `GET /v1/payouts/by-key/{id}` could never find anything. Every UNKNOWN payout would
+  eventually be tombstoned, even ones the provider had paid.
+- **Fix:** send `X-Payout-Idempotency-Key = payoutId`.
+- **Regression:** `providerGetsIdempotencyKey`.
+
+### 4. Hikari `auto-commit: false` silently discarded writes made outside a transaction
+- **Found by:** C2 setup. `AccountRepository.create` returned "Account not found after create".
+- **Root cause:** with auto-commit off globally, a write outside `@Transactional` runs in an
+  implicit transaction that is never committed, and Hikari rolls it back when the connection
+  returns to the pool. This hit account creation and `PayoutRecoveryJob`'s backoff reschedule.
+- **Fix:** removed the setting. Spring's transaction manager turns auto-commit off for each
+  real transaction anyway.
+- **Regression:** `writesOutsideTransactionsAreNotRolledBack`.
+
+### 5. Every transfer returned 500 (idempotency response never stored)
+- **Found by:** C3. The first run reported 0 violations with 0 of 100 transfers acknowledged,
+  so it proved nothing. The scenario now also requires at least half of transfers to succeed.
+- **Root cause:** `IdempotencyService` wrote `response_body = ?` (varchar) into a `JSONB`
+  column. Postgres rejected it, the whole transaction rolled back, and the global handler
+  returned 500 without logging anything.
+- **Fix:** `?::jsonb`. `GlobalExceptionHandler` now logs unexpected exceptions (no bodies).
+- **Regression:** `transferThenReplay`, `sameKeyDifferentBodyIsRejected`.
+
+### 6. Code and migrations that had never run on Postgres
+Found as soon as the chaos context booted against real Postgres:
+- `V5__consumers.sql` used `raise_immutable_error()`, which no migration defined. Fixed by
+  defining it in V5.
+- `V7__payouts.sql` had a partial index predicate using `now()`, which Postgres rejects
+  because it isn't IMMUTABLE. The age filter moved to the query.
+- No database had a `flyway_schema_history` table, so editing V5 and V7 did not break the
+  "never edit an applied migration" rule.
+- pgjdbc can't bind `java.time.Instant`. Added `common.SqlTime.ts(...)` (OffsetDateTime) at
+  every bind site.
+- `LedgerService.post` bound a `List` to `ANY(?)`, which JdbcClient rejects. It now binds a
+  `Long[]`.
+- `PayoutProviderProperties` was never registered and its prefix didn't match
+  `application.yml`, so the provider URL and timeouts were never bound.
+- The recovery job compared app-clock timestamps with DB `now()`. It now uses the injected Clock.
+- A tombstone cancel was recorded as `FAILED` instead of `CANCELLED`, and a 409 from
+  `/cancel` (already settled) was ignored. Both are fixed.
+
+### 7. Build: `./mvnw verify -Pchaos` ran zero tests
+- **Root cause:** the profile set `<excludedGroups></excludedGroups>`, but Maven ignores empty
+  config values when merging. The tests were both included and excluded as `chaos`.
+- **Fix:** `test.groups` / `test.excludedGroups` properties that the profile overrides.
+- Also, test JVMs now run with `-Duser.timezone=UTC`. A Windows JVM defaults to
+  `Asia/Calcutta`, which Postgres 16 rejects at connect.
+
+## Open issues (not fixed yet)
+- **Kafka consumers crash-loop.** `JsonDeserializer` gets records with no type headers and no
+  default type (`No type information in headers`), and there is no `ErrorHandlingDeserializer`,
+  so the audit and notification consumers are stuck at offset 0. This belongs to C5 (Kafka
+  outage, exactly one `audit_log` row per eventId).
+- **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
+  P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto
+  `AbstractToxiproxyIT` (or a plain Postgres base) will likely surface more bugs like #5 and #6.
+- **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
+  Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
+  real one.
+- **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
+  so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.
+
+## Scenario notes
+- **C2:** RANDOM provider plus flapping `reset_peer` toxics (upstream, timeout 0: request lost;
+  downstream, timeout 50ms against a 150ms provider: provider paid, response lost). The first
+  recovery passes still run under fault.
+- **C3:** 300±100ms latency, plus a 2s timeout toxic every 4–10s. The first version used 1–4s
+  intervals, so every ~4s transaction overlapped an outage and nothing could succeed. Gave-up
+  transfers are expected (5 client attempts take ~2.5s, shorter than a drop window plus
+  reconnect) and must have moved no money.

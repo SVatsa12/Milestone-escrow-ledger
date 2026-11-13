@@ -91,7 +91,7 @@ public class IdempotencyService {
 
                 jdbcClient.sql("""
                         UPDATE idempotency_keys
-                        SET response_status = ?, response_body = ?
+                        SET response_status = ?, response_body = ?::jsonb
                         WHERE key = ?
                     """)
                     .param(status)

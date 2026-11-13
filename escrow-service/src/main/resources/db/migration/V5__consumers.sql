@@ -32,6 +32,13 @@ CREATE INDEX ix_audit_log_by_event_type ON audit_log (event_type);
 CREATE INDEX ix_audit_log_by_recorded_at ON audit_log (recorded_at);
 
 -- Immutability trigger: audit_log is append-only
+CREATE OR REPLACE FUNCTION raise_immutable_error()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION '% rows are immutable', TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TRIGGER audit_log_immutable BEFORE UPDATE OR DELETE ON audit_log
     FOR EACH ROW EXECUTE FUNCTION raise_immutable_error();
 

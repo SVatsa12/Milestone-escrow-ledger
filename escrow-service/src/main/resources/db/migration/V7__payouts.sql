@@ -19,7 +19,7 @@ CREATE TABLE payouts (
 
 -- Index for recovery job: claim payouts by state and next_check_at
 CREATE INDEX idx_payouts_recovery ON payouts (state, next_check_at, id)
-    WHERE state IN ('UNKNOWN', 'PROCESSING') OR (state = 'RESERVED' AND updated_at < now() - INTERVAL '30 seconds');
+    WHERE state IN ('RESERVED', 'PROCESSING', 'UNKNOWN');  -- now() is not IMMUTABLE, so the age filter lives in the query
 
 -- Track payout idempotency: same freelancer + idempotency key = same payout
 CREATE TABLE payout_idempotency (

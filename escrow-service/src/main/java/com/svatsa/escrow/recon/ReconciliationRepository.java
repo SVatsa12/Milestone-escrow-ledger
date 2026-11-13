@@ -1,5 +1,6 @@
 package com.svatsa.escrow.recon;
 
+import com.svatsa.escrow.common.SqlTime;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -42,7 +43,7 @@ public class ReconciliationRepository {
             .param(1, id)
             .param(2, runDate)
             .param(3, entityType)
-            .param(4, now)
+            .param(4, SqlTime.ts(now))
             .update();
 
         return new ReconRun(id, runDate, entityType, now, null, "RUNNING", 0, null);
@@ -130,7 +131,7 @@ public class ReconciliationRepository {
             SET completed_at = ?1, status = ?2, mismatch_count = ?3, notes = ?4
             WHERE id = ?5
             """)
-            .param(1, Instant.now())
+            .param(1, SqlTime.ts(Instant.now()))
             .param(2, "COMPLETED")
             .param(3, mismatchCount)
             .param(4, notes)
@@ -147,7 +148,7 @@ public class ReconciliationRepository {
             SET completed_at = ?1, status = ?2, notes = ?3
             WHERE id = ?4
             """)
-            .param(1, Instant.now())
+            .param(1, SqlTime.ts(Instant.now()))
             .param(2, "FAILED")
             .param(3, reason)
             .param(4, runId)

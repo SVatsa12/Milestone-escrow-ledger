@@ -9,7 +9,9 @@ spring:
   datasource:
     hikari:
       maximum-pool-size: 20
-      auto-commit: false
+      # Keep Hikari's default auto-commit=true. @Transactional / TransactionTemplate switch it off per
+      # transaction; with auto-commit=false globally, any write made outside a transaction is silently
+      # rolled back when the connection returns to the pool (found by chaos C2, see chaos/FINDINGS.md).
   jpa:
     hibernate:
       ddl-auto: none

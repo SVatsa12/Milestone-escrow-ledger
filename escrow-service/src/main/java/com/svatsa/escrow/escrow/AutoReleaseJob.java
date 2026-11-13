@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.SqlTime;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
@@ -118,7 +119,7 @@ public class AutoReleaseJob {
                 LIMIT 1
                 """)
                 .param(MilestoneState.SUBMITTED.name())
-                .param(now)
+                .param(SqlTime.ts(now))
                 .query(Long.class)
                 .optional()
                 .orElse(null);

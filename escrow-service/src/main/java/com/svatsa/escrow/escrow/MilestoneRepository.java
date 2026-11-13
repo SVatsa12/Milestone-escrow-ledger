@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.SqlTime;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -90,7 +91,7 @@ public class MilestoneRepository {
             .param(seq)
             .param(title)
             .param(amountPaise)
-            .param(dueAt)
+            .param(SqlTime.ts(dueAt))
             .param(MilestoneState.DRAFT.name())
             .query(Long.class)
             .single();

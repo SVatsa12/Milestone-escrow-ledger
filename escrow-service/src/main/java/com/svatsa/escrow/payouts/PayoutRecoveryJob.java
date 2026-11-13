@@ -1,5 +1,6 @@
 package com.svatsa.escrow.payouts;
 
+import com.svatsa.escrow.common.SqlTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -74,15 +75,16 @@ public class PayoutRecoveryJob {
                 WHERE id IN (
                     SELECT id FROM payouts 
                     WHERE (state IN ('UNKNOWN', 'PROCESSING') AND next_check_at <= ?)
-                       OR (state = 'RESERVED' AND updated_at < now() - INTERVAL '30 seconds')
+                       OR (state = 'RESERVED' AND updated_at < ?)
                     ORDER BY next_check_at NULLS FIRST
                     LIMIT 50
                     FOR UPDATE SKIP LOCKED
                 )
                 RETURNING id
                 """)
-                .param(leaseUntil)
-                .param(clock.instant())
+                .param(SqlTime.ts(leaseUntil))
+                .param(SqlTime.ts(clock.instant()))
+                .param(SqlTime.ts(clock.instant().minusSeconds(30)))
                 .query((rs, rowNum) -> rs.getObject(1, UUID.class))
                 .stream()
                 .toList();
@@ -133,39 +135,56 @@ public class PayoutRecoveryJob {
         if (statusResponse == null) {
             // Still UNKNOWN (timeout/error checking status)
             // Back off with exponential delay
-            long backoffSeconds = Math.min(Math.round(Math.pow(2, p.attempts()) * 10), 600);  // max 10 min
-            scheduleNextCheck(payoutId, backoffSeconds);
+            scheduleNextCheck(payoutId, backoffSeconds(p.attempts()));
             return;
         }
         
         if (statusResponse.statusCode() == 200) {
-            // Provider has a record
             var providerPayout = statusResponse.payout();
-            if (providerPayout != null && "SUCCESS".equals(providerPayout.status())) {
-                payoutService.confirmPayout(p);
-            } else if (providerPayout != null && "FAILED".equals(providerPayout.status())) {
-                payoutService.reversePayout(p, "Provider FAILED: " + providerPayout.status());
-            }
+            String providerStatus = providerPayout == null ? null : providerPayout.status();
+            settleFromProviderStatus(p, providerStatus);
         } else if (statusResponse.statusCode() == 404) {
-            // Not at provider
             if (p.createdAt().isBefore(clock.instant().minusSeconds(120))) {
-                // Older than 2 minutes: send cancel/tombstone
-                boolean cancelled = providerClient.cancelPayout(payoutId);
-                if (cancelled) {
-                    payoutService.reversePayout(p, "Tombstone cancel after 2 min");
+                // The provider never saw it. Tombstone the key: that is what makes a
+                // late-arriving original request harmless (the provider will 409 it).
+                String finalStatus = providerClient.cancelPayout(payoutId);
+                if (finalStatus == null) {
+                    scheduleNextCheck(payoutId, backoffSeconds(p.attempts()));
+                } else {
+                    settleFromProviderStatus(p, finalStatus);
                 }
             } else {
-                // Recent: back off (request may still be in flight)
+                // Recent: the original request may still be in flight.
                 scheduleNextCheck(payoutId, 15);
             }
         }
     }
-    
+
+    /**
+     * Act on a status the provider reported for this payout's key.
+     */
+    private void settleFromProviderStatus(Payout p, String providerStatus) {
+        if ("SUCCESS".equals(providerStatus)) {
+            payoutService.confirmPayout(p);
+        } else if ("FAILED".equals(providerStatus)) {
+            payoutService.reversePayout(p, PayoutState.FAILED, "FAILED", "Provider FAILED");
+        } else if ("CANCELLED".equals(providerStatus)) {
+            payoutService.reversePayout(p, PayoutState.CANCELLED, "CANCELLED", "Tombstone cancel at provider");
+        } else {
+            // PROCESSING or something we do not understand: look again later, move no money.
+            scheduleNextCheck(p.id(), backoffSeconds(p.attempts()));
+        }
+    }
+
+    private static long backoffSeconds(int attempts) {
+        return Math.min(Math.round(Math.pow(2, Math.min(attempts, 10)) * 10), 600);
+    }
+
     /**
      * Schedule the next check for a payout.
      */
     private void scheduleNextCheck(UUID payoutId, long backoffSeconds) {
         Instant nextCheckAt = clock.instant().plusSeconds(backoffSeconds);
-        payoutRepository.claimForRecovery(payoutId, nextCheckAt);
+        payoutRepository.rescheduleCheck(payoutId, nextCheckAt);
     }
 }

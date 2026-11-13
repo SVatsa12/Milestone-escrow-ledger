@@ -99,7 +99,8 @@ public class LedgerService {
                 ORDER BY id
                 FOR UPDATE
             """)
-            .param(accountIds)
+            // JdbcClient rejects a List for a positional parameter; pgjdbc binds Long[] as int8[].
+            .param(accountIds.toArray(new Long[0]))
             .query(Account.class)
             .list();
 

@@ -16,6 +16,8 @@ import org.springframework.web.context.request.WebRequest;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(DomainException.class)
     public ResponseEntity<ProblemDetail> handleDomainException(
         DomainException ex,
@@ -51,6 +53,8 @@ public class GlobalExceptionHandler {
         Exception ex,
         WebRequest request
     ) {
+        // Unexpected failures were previously swallowed without a trace.
+        log.error("request.failed path={} error={}", request.getDescription(false), ex.toString(), ex);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "Internal server error"

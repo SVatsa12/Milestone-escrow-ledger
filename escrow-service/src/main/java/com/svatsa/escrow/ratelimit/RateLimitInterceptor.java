@@ -1,145 +1,145 @@
 package com.svatsa.escrow.ratelimit;
 
-import com.svatsa.escrow.common.DomainException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.net.URI;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
 /**
- * HTTP interceptor that enforces rate limits on money-moving endpoints.
- * 
- * Intercepts POST /api/v1/** (excluding admin and webhooks) and checks rate limits
- * per actor. If rate limit exceeded, returns 429 with Retry-After header.
- * 
- * If Redis is unavailable, the check fails open and the request proceeds.
+ * HandlerInterceptor for rate limiting money-moving endpoints.
+ *
+ * Applied to:
+ * - POST /api/v1/** (general money operations: transfers, milestones, disputes, payouts)
+ * Excluded:
+ * - /api/v1/webhooks/** (webhook endpoints from external providers, not rate-limited)
+ * - /api/v1/admin/** (admin endpoints not rate-limited)
+ *
+ * Rate limits:
+ * - General: 30 requests per minute per actor
+ * - Payouts: 5 requests per minute per actor (stricter)
+ *
+ * Fail-open strategy:
+ * - If Redis is down, the request is ALLOWED (the rate limiter returns failOpen())
+ * - A warning is logged and a metric is incremented
+ * - This ensures money operations never fail due to rate limiting infrastructure issues
+ *
+ * Idempotent-Replayed requests still count against the limit (they're not free retries).
  */
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
+
     private static final Logger log = LoggerFactory.getLogger(RateLimitInterceptor.class);
-    
+
     private final RedisRateLimiter rateLimiter;
-    private final RateLimitProperties config;
-    
-    public RateLimitInterceptor(RedisRateLimiter rateLimiter, RateLimitProperties config) {
+    private final RateLimitConfig config;
+    private final MeterRegistry meterRegistry;
+
+    public RateLimitInterceptor(
+        RedisRateLimiter rateLimiter,
+        RateLimitConfig config,
+        MeterRegistry meterRegistry
+    ) {
         this.rateLimiter = rateLimiter;
         this.config = config;
+        this.meterRegistry = meterRegistry;
     }
-    
+
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
-            throws Exception {
-        String method = request.getMethod();
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws IOException {
+        // Only intercept POST requests
+        if (!"POST".equals(request.getMethod())) {
+            return true;
+        }
+
         String path = request.getRequestURI();
-        
-        // Only rate-limit POST requests to /api/v1/**
-        if (!"POST".equals(method)) {
+
+        // Exclude webhook endpoints
+        if (path.contains("/webhooks/")) {
             return true;
         }
-        
-        // Skip admin and webhook endpoints
-        if (path.startsWith("/api/v1/admin/") || path.startsWith("/webhooks/")) {
+
+        // Exclude admin endpoints
+        if (path.contains("/admin/")) {
             return true;
         }
-        
-        // Skip non-v1 endpoints
+
+        // Only rate-limit /api/v1/** endpoints
         if (!path.startsWith("/api/v1/")) {
             return true;
         }
-        
-        // Extract actor ID from header
-        String actorIdStr = request.getHeader("X-Actor-Id");
-        if (actorIdStr == null || actorIdStr.isBlank()) {
-            log.warn("Rate limit check skipped: missing X-Actor-Id header");
+
+        // Rate limiting is disabled
+        if (!config.enabled()) {
             return true;
         }
-        
-        long actorId;
-        try {
-            actorId = Long.parseLong(actorIdStr);
-        } catch (NumberFormatException e) {
-            log.warn("Rate limit check skipped: invalid X-Actor-Id: {}", actorIdStr);
+
+        // Extract actor ID from request headers
+        String actorId = request.getHeader("X-Actor-Id");
+        if (actorId == null || actorId.isBlank()) {
+            // No actor ID; allow (unauthenticated requests are handled elsewhere)
             return true;
         }
-        
-        // Determine bucket based on endpoint
-        String bucket = determineBucket(path);
-        int limit = determineLimitForBucket(bucket);
-        
-        // Check rate limit
-        RedisRateLimiter.RateLimitResult result = rateLimiter.checkLimit(actorId, bucket, limit);
-        
-        if (!result.allowed()) {
-            log.warn("Rate limit exceeded for actor {} on {}", actorId, path);
-            
-            // Return 429 with Retry-After header
+
+        // Determine the rate limit based on the endpoint
+        int limit = config.getLimitForEndpoint(path);
+
+        // Check the rate limit
+        RedisRateLimiter.RateLimitResult result = rateLimiter.checkLimit(
+            actorId,
+            path,
+            limit,
+            config.windowSeconds()
+        );
+
+        // Metrics
+        if (result.redisDown) {
+            meterRegistry.counter("ratelimit.redis_down", "path", path).increment();
+            log.warn("Rate limiting: Redis is down, allowing request for actor={} path={}", actorId, path);
+        }
+
+        if (!result.allowed) {
+            // Rate limit exceeded
+            meterRegistry.counter("ratelimit.exceeded", "path", path, "actor", actorId).increment();
+            log.warn("Rate limit exceeded for actor={} path={}", actorId, path);
+
+            // Return 429 Too Many Requests
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-            
-            // Set Retry-After header (RFC 7231: seconds or HTTP date)
-            String retryAfter = calculateRetryAfter(result.resetAt());
-            response.setHeader("Retry-After", retryAfter);
-            
-            // Set Content-Type and write error response
             response.setContentType("application/problem+json");
-            String errorBody = """
-                {
-                  "type": "about:blank",
-                  "status": 429,
-                  "code": "RATE_LIMITED",
-                  "title": "Too Many Requests",
-                  "detail": "Rate limit exceeded. Retry after %s seconds.",
-                  "instance": "%s"
-                }
-                """.formatted(calculateRetrySeconds(result.resetAt()), path);
-            response.getWriter().write(errorBody);
+            response.addHeader("Retry-After", String.valueOf(result.resetTime - Instant.now().getEpochSecond()));
+
+            // ProblemDetail response
+            ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Rate limit exceeded"
+            );
+            detail.setProperty("code", "RATE_LIMITED");
+            detail.setProperty("limit", limit);
+            detail.setProperty("resetTime", result.resetTime);
+
+            String json = new com.fasterxml.jackson.databind.ObjectMapper()
+                .writeValueAsString(detail);
+            response.getWriter().write(json);
+
             return false;
         }
-        
-        return true;
-    }
-    
-    /**
-     * Determine the bucket (operation type) based on the request path.
-     */
-    private String determineBucket(String path) {
-        if (path.contains("/payouts")) {
-            return "payout";
+
+        // Request allowed
+        meterRegistry.counter("ratelimit.allowed", "path", path).increment();
+        response.addHeader("X-RateLimit-Limit", String.valueOf(limit));
+        response.addHeader("X-RateLimit-Remaining", String.valueOf(result.remaining));
+        if (result.resetTime > 0) {
+            response.addHeader("X-RateLimit-Reset", String.valueOf(result.resetTime));
         }
-        // Default for all other money-moving endpoints (transfers, escrow operations, etc.)
-        return "transfer";
-    }
-    
-    /**
-     * Get the rate limit for a bucket.
-     */
-    private int determineLimitForBucket(String bucket) {
-        return "payout".equals(bucket)
-            ? config.getPayoutRequestsPerMinute()
-            : config.getTransferRequestsPerMinute();
-    }
-    
-    /**
-     * Calculate Retry-After header value (seconds until reset).
-     */
-    private String calculateRetrySeconds(Instant resetAt) {
-        long now = System.currentTimeMillis();
-        long resetMs = resetAt.toEpochMilli();
-        long secondsUntilReset = Math.max(1, (resetMs - now) / 1000);
-        return String.valueOf(secondsUntilReset);
-    }
-    
-    /**
-     * Calculate Retry-After header value (can be in seconds or HTTP date).
-     * We use seconds format for simplicity (RFC 7231 allows both).
-     */
-    private String calculateRetryAfter(Instant resetAt) {
-        return calculateRetrySeconds(resetAt);
+
+        return true;
     }
 }

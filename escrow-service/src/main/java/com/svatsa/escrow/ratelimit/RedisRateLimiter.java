@@ -1,144 +1,176 @@
 package com.svatsa.escrow.ratelimit;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.List;
 
 /**
- * Redis-backed rate limiter using fixed-window buckets.
- * 
- * Implements a Lua script to atomically check and increment a counter per actor per minute.
- * If Redis is unavailable (connection error), logs a warning and allows the request (fail-open).
+ * Redis-backed rate limiter using a Lua script for atomic operations.
+ *
+ * Uses a fixed-window counter approach:
+ * - Key: ratelimit:{actorId}:{bucket}:{window}
+ * - Lua script atomically increments the counter and sets TTL
+ * - Returns the count after increment; if it exceeds the limit, the request is rejected
+ *
+ * The script is atomic at the Redis level, so no race conditions between check and increment.
  */
 @Component
 public class RedisRateLimiter {
-    private static final Logger log = LoggerFactory.getLogger(RedisRateLimiter.class);
-    
+
     private final StringRedisTemplate redisTemplate;
     private final Clock clock;
-    
-    /**
-     * Lua script that atomically:
-     * 1. Gets the current counter value for the key
-     * 2. Increments if below the limit (or creates with EXPIRE if key doesn't exist)
-     * 3. Returns {allowRequest: 1/0, currentCount: N, resetAtSeconds: unix}
-     * 
-     * Keys: KEYS[1] = ratelimit key
-     * Args: ARGV[1] = limit, ARGV[2] = window duration in seconds, ARGV[3] = current unix seconds
-     */
-    private static final String LUA_SCRIPT = """
+    private final RedisScript<Long> rateLimitScript;
+
+    // Lua script for atomic increment with TTL
+    // KEYS[1] = the rate limit key
+    // ARGV[1] = limit (max requests allowed in window)
+    // ARGV[2] = window size in seconds (TTL)
+    // Returns: the count after increment, or -1 if limit exceeded
+    private static final String RATE_LIMIT_LUA = """
         local key = KEYS[1]
         local limit = tonumber(ARGV[1])
-        local windowSecs = tonumber(ARGV[2])
-        local nowSecs = tonumber(ARGV[3])
+        local window = tonumber(ARGV[2])
         
-        -- Get current count (if key exists)
-        local current = redis.call('GET', key)
-        if current == false then
-            current = 0
+        local current = redis.call('incr', key)
+        if current == 1 then
+            redis.call('expire', key, window)
+        end
+        
+        if current > limit then
+            return -1
         else
-            current = tonumber(current)
+            return current
         end
-        
-        -- Calculate window end (aligned to minutes)
-        local windowStart = math.floor(nowSecs / windowSecs) * windowSecs
-        local windowEnd = windowStart + windowSecs
-        
-        -- Check if this is a new window (key was from a previous window)
-        local ttl = redis.call('TTL', key)
-        local isNewWindow = (ttl == -2) or (ttl == -1 and current == 0)
-        
-        if isNewWindow then
-            current = 0
-        end
-        
-        -- Check limit
-        local allowRequest = 1
-        if current >= limit then
-            allowRequest = 0
-        else
-            current = current + 1
-            redis.call('SET', key, current, 'EX', windowSecs)
-        end
-        
-        return {allowRequest, current, windowEnd}
         """;
-    
-    private final RedisScript<java.util.List> rateLimitScript;
-    
+
     public RedisRateLimiter(StringRedisTemplate redisTemplate, Clock clock) {
         this.redisTemplate = redisTemplate;
         this.clock = clock;
-        // Compile the Lua script
-        this.rateLimitScript = RedisScript.of(LUA_SCRIPT);
+        this.rateLimitScript = RedisScript.of(RATE_LIMIT_LUA, Long.class);
     }
-    
+
     /**
-     * Check if a request from an actor is within the rate limit.
-     * 
-     * @param actorId unique identifier for the requester
-     * @param bucket operation type (e.g., "transfer", "payout")
-     * @param limitPerMinute maximum requests per minute
-     * @return RateLimitResult with allowRequest flag and reset time
+     * Check if a request is allowed under the rate limit.
+     * Uses a fixed-window counter approach.
+     *
+     * @param actorId the actor making the request (user ID)
+     * @param endpoint the endpoint path (e.g., /api/v1/transfers, /api/v1/payouts)
+     * @param limit max requests allowed per window
+     * @param windowSeconds window size in seconds (typically 60 for "per minute")
+     * @return RateLimitResult with allowed status, remaining requests, and reset time
      */
-    public RateLimitResult checkLimit(long actorId, String bucket, int limitPerMinute) {
+    public RateLimitResult checkLimit(String actorId, String endpoint, int limit, int windowSeconds) {
         try {
-            String key = "ratelimit:%d:%s:%d".formatted(actorId, bucket, getCurrentWindow());
-            long nowSeconds = clock.instant().getEpochSecond();
-            int windowSeconds = 60; // 1-minute window
-            
-            var result = redisTemplate.execute(
+            String key = buildKey(actorId, endpoint);
+            Long count = redisTemplate.execute(
                 rateLimitScript,
-                Collections.singletonList(key),
-                String.valueOf(limitPerMinute),
-                String.valueOf(windowSeconds),
-                String.valueOf(nowSeconds)
+                List.of(key),
+                String.valueOf(limit),
+                String.valueOf(windowSeconds)
             );
-            
-            if (result == null || result.size() < 3) {
-                // Unexpected response; fail open with a warning
-                log.warn("Unexpected rate limit script response, failing open");
-                return new RateLimitResult(true, 0, Instant.ofEpochSecond(nowSeconds + windowSeconds));
+
+            if (count == null) {
+                // Script execution error; default to fail-open (allow)
+                return RateLimitResult.allowed(limit);
             }
-            
-            boolean allowed = !((Number) result.get(0)).equals(0);
-            long currentCount = ((Number) result.get(1)).longValue();
-            long resetAtSeconds = ((Number) result.get(2)).longValue();
-            
-            return new RateLimitResult(allowed, currentCount, Instant.ofEpochSecond(resetAtSeconds));
+
+            if (count == -1) {
+                // Limit exceeded
+                long now = clock.instant().getEpochSecond();
+                long windowStart = (now / windowSeconds) * windowSeconds;
+                long resetTime = windowStart + windowSeconds;
+                return RateLimitResult.limitExceeded(resetTime);
+            } else {
+                // Request allowed
+                int remaining = (int) Math.max(0, limit - count);
+                long now = clock.instant().getEpochSecond();
+                long windowStart = (now / windowSeconds) * windowSeconds;
+                long resetTime = windowStart + windowSeconds;
+                return RateLimitResult.allowed(remaining, resetTime);
+            }
         } catch (Exception e) {
-            // Redis unavailable or any other error: fail open
-            log.warn("Rate limiter failed, failing open (Redis may be unavailable)", e);
-            long resetAtSeconds = clock.instant().getEpochSecond() + 60;
-            return new RateLimitResult(true, 0, Instant.ofEpochSecond(resetAtSeconds));
+            // Fail open: if Redis is down or unreachable, allow the request
+            // Log the error for monitoring
+            return RateLimitResult.failOpen();
         }
     }
-    
+
     /**
-     * Get the current minute window (for key bucketing).
-     * Window changes once per minute.
+     * Reset the rate limit for a specific actor/endpoint combination.
+     * Useful for testing or manual admin operations.
      */
-    private long getCurrentWindow() {
-        long nowSeconds = clock.instant().getEpochSecond();
-        return nowSeconds / 60;
+    public void reset(String actorId, String endpoint) {
+        try {
+            String key = buildKey(actorId, endpoint);
+            redisTemplate.delete(key);
+        } catch (Exception e) {
+            // Silently ignore reset failures
+        }
     }
-    
+
+    /**
+     * Get the current count for debugging.
+     */
+    public long getCurrentCount(String actorId, String endpoint) {
+        try {
+            String key = buildKey(actorId, endpoint);
+            String value = redisTemplate.opsForValue().get(key);
+            return value != null ? Long.parseLong(value) : 0L;
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    private String buildKey(String actorId, String endpoint) {
+        long now = clock.instant().getEpochSecond();
+        long windowSize = 60; // Fixed 60-second windows; could be configurable
+        long windowStart = (now / windowSize) * windowSize;
+        // Key format: ratelimit:{actorId}:{endpoint_hash}:{window_start}
+        return String.format("ratelimit:%s:%s:%d", actorId, endpoint, windowStart);
+    }
+
     /**
      * Result of a rate limit check.
-     * 
-     * @param allowed true if the request is within limits
-     * @param currentCount current request count in this window
-     * @param resetAt when the window resets (unix instant)
      */
-    public record RateLimitResult(
-        boolean allowed,
-        long currentCount,
-        java.time.Instant resetAt
-    ) {}
+    public static class RateLimitResult {
+        public final boolean allowed;
+        public final boolean redisDown;
+        public final int remaining;
+        public final long resetTime; // Unix timestamp when the window resets
+
+        private RateLimitResult(boolean allowed, boolean redisDown, int remaining, long resetTime) {
+            this.allowed = allowed;
+            this.redisDown = redisDown;
+            this.remaining = remaining;
+            this.resetTime = resetTime;
+        }
+
+        public static RateLimitResult allowed(int remaining) {
+            return new RateLimitResult(true, false, remaining, 0);
+        }
+
+        public static RateLimitResult allowed(int remaining, long resetTime) {
+            return new RateLimitResult(true, false, remaining, resetTime);
+        }
+
+        public static RateLimitResult limitExceeded(long resetTime) {
+            return new RateLimitResult(false, false, 0, resetTime);
+        }
+
+        public static RateLimitResult failOpen() {
+            return new RateLimitResult(true, true, -1, 0);
+        }
+
+        @Override
+        public String toString() {
+            if (redisDown) {
+                return "RateLimitResult{allowed=true, redis_down=true}";
+            }
+            return "RateLimitResult{allowed=" + allowed + ", remaining=" + remaining + ", resetTime=" + resetTime + "}";
+        }
+    }
 }

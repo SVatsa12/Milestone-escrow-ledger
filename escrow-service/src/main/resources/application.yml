@@ -75,12 +75,10 @@ razorpay:
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
 
 ratelimit:
-  transfer-requests-per-minute: 30
-  payout-requests-per-minute: 5
-
-ratelimit:
-  transfer-requests-per-minute: 30
-  payout-requests-per-minute: 5
+  enabled: true
+  default-limit: 30      # requests per minute for general money operations
+  payout-limit: 5        # requests per minute for payout operations (stricter)
+  window-seconds: 60     # duration of each rate limit window
 
 chaos:
   crash-point: NONE

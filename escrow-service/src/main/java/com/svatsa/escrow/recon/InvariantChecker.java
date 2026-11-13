@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Verifies ledger invariants through SQL queries.
  * 
- * Invariants (I1-I6) are properties that must always hold if the system is correct.
+ * Invariants (I1-I9) are properties that must always hold if the system is correct.
  * Each is checked via a SQL query; violations indicate a bug or corruption.
  * 
  * I1: Every journal entry sums to 0 and has >= 2 postings
@@ -29,6 +29,17 @@ import java.util.List;
  * I6: Escrow conservation: for each project, ESCROW account balance = sum of milestones
  *     in FUNDED, SUBMITTED, or APPROVED states; DISPUTE_HOLD balance = sum of milestones
  *     in DISPUTED state.
+ *
+ * I7: PAYOUT_IN_FLIGHT account balance = SUM(amount_paise) of payouts in
+ *     (RESERVED, PROCESSING, UNKNOWN). Terminal payouts (CONFIRMED/FAILED/CANCELLED)
+ *     have no funds in PAYOUT_IN_FLIGHT.
+ *
+ * I8: Payout saga consistency: CONFIRMED payouts have exactly one PAYOUT_CONFIRM entry
+ *     and zero reverse entries; FAILED/CANCELLED payouts have exactly one reverse entry
+ *     (PAYOUT_REVERSE or PAYOUT_CANCEL) and zero confirm entries.
+ *
+ * I9: Outbox staleness (warning): no unpublished outbox rows older than 5 minutes.
+ *     Indicates relay job may be stuck or Kafka unavailable.
  */
 @Service
 public class InvariantChecker {
@@ -40,7 +51,7 @@ public class InvariantChecker {
     }
 
     /**
-     * Check all invariants (I1-I6) and return a list of violations (empty if all OK).
+     * Check all invariants (I1-I9) and return a list of violations (empty if all OK).
      */
     public List<Violation> check() {
         try {
@@ -51,6 +62,9 @@ public class InvariantChecker {
             violations.addAll(checkI4());
             violations.addAll(checkI5());
             violations.addAll(checkI6());
+            violations.addAll(checkI7());
+            violations.addAll(checkI8());
+            violations.addAll(checkI9());
             return violations;
         } catch (Exception e) {
             // If tables don't exist (e.g., H2 test mode), return no violations
@@ -244,6 +258,129 @@ public class InvariantChecker {
 
         for (String mismatch : disputeMismatches) {
             violations.add(new Violation("I6", "DISPUTE_HOLD balance mismatch: " + mismatch));
+        }
+
+        return violations;
+    }
+
+    /**
+     * I7: PAYOUT_IN_FLIGHT account balance = SUM(amount_paise) of payouts in 
+     * (RESERVED, PROCESSING, UNKNOWN).
+     */
+    private List<Violation> checkI7() {
+        List<Violation> violations = new ArrayList<>();
+
+        try {
+            Long accountBalance = jdbcClient.sql(
+                "SELECT COALESCE(balance, 0) FROM accounts WHERE code = 'PAYOUT_IN_FLIGHT'")
+                .query(Long.class)
+                .optional()
+                .orElse(0L);
+
+            Long payoutSum = jdbcClient.sql("""
+                SELECT COALESCE(SUM(amount_paise), 0)
+                FROM payouts
+                WHERE state IN ('RESERVED', 'PROCESSING', 'UNKNOWN')
+                """)
+                .query(Long.class)
+                .single();
+
+            if (accountBalance != payoutSum) {
+                violations.add(new Violation("I7",
+                    "PAYOUT_IN_FLIGHT account balance (" + accountBalance + 
+                    ") != pending payouts sum (" + payoutSum + ")"));
+            }
+        } catch (Exception e) {
+            // Payouts table may not exist yet
+        }
+
+        return violations;
+    }
+
+    /**
+     * I8: Every CONFIRMED payout has exactly one confirm entry and no reverse entry;
+     * every FAILED/CANCELLED payout has exactly one reverse entry and no confirm entry.
+     */
+    private List<Violation> checkI8() {
+        List<Violation> violations = new ArrayList<>();
+
+        try {
+            // Check CONFIRMED payouts
+            List<String> confirmedMismatches = jdbcClient.sql("""
+                SELECT p.id
+                FROM payouts p
+                WHERE p.state = 'CONFIRMED'
+                AND (
+                    (SELECT COUNT(*) FROM journal_entries 
+                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                     AND type = 'PAYOUT_CONFIRM') <> 1
+                    OR
+                    (SELECT COUNT(*) FROM journal_entries 
+                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                     AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) > 0
+                )
+                """)
+                .query(String.class)
+                .list();
+
+            for (String payoutId : confirmedMismatches) {
+                violations.add(new Violation("I8",
+                    "CONFIRMED payout " + payoutId + " missing or duplicate confirm/reverse entry"));
+            }
+
+            // Check FAILED/CANCELLED payouts
+            List<String> failedMismatches = jdbcClient.sql("""
+                SELECT p.id
+                FROM payouts p
+                WHERE p.state IN ('FAILED', 'CANCELLED')
+                AND (
+                    (SELECT COUNT(*) FROM journal_entries 
+                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                     AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) <> 1
+                    OR
+                    (SELECT COUNT(*) FROM journal_entries 
+                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                     AND type = 'PAYOUT_CONFIRM') > 0
+                )
+                """)
+                .query(String.class)
+                .list();
+
+            for (String payoutId : failedMismatches) {
+                violations.add(new Violation("I8",
+                    "FAILED/CANCELLED payout " + payoutId + " missing or duplicate reverse/confirm entry"));
+            }
+        } catch (Exception e) {
+            // Payouts table may not exist yet
+        }
+
+        return violations;
+    }
+
+    /**
+     * I9: Every outbox row older than 5 minutes is published.
+     * (Warning level, not a money violation, but indicates relay issues)
+     */
+    private List<Violation> checkI9() {
+        List<Violation> violations = new ArrayList<>();
+
+        try {
+            Long staleCount = jdbcClient.sql("""
+                SELECT COUNT(*)
+                FROM outbox
+                WHERE published_at IS NULL
+                AND created_at < now() - INTERVAL '5 minutes'
+                """)
+                .query(Long.class)
+                .single();
+
+            if (staleCount != null && staleCount > 0) {
+                violations.add(new Violation("I9_WARN",
+                    "Found " + staleCount + " unpublished outbox rows older than 5 minutes " +
+                    "(relay may be stuck)"));
+            }
+        } catch (Exception e) {
+            // Outbox table may not exist yet
         }
 
         return violations;

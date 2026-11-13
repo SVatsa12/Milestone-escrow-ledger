@@ -4,6 +4,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,6 +56,22 @@ public class PayoutRepository {
             .param(id)
             .query(this::mapRow)
             .optional();
+    }
+    
+    /**
+     * Find all payouts in flight or completed states (for reconciliation).
+     * States: RESERVED, PROCESSING, UNKNOWN, CONFIRMED, FAILED, CANCELLED.
+     */
+    public List<Payout> findAllInFlightOrCompleted() {
+        return jdbcClient.sql("""
+            SELECT id, freelancer_id, wallet_account_id, amount_paise, state, provider_status,
+                   attempts, next_check_at, last_error, created_at, updated_at, version
+            FROM payouts 
+            WHERE state IN ('RESERVED', 'PROCESSING', 'UNKNOWN', 'CONFIRMED', 'FAILED', 'CANCELLED')
+            ORDER BY created_at DESC
+            """)
+            .query(this::mapRow)
+            .list();
     }
     
     /**

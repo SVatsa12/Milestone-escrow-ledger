@@ -36,7 +36,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * with proper event emission and ledger integration.
  */
 @SpringBootTest
-@Disabled("Webhook tests require full ledger and event infrastructure")
+@Disabled("Webhook tests require Testcontainers (Postgres, Kafka) to be running")
 @TestPropertySource(properties = {
     "razorpay.key-id=test-key",
     "razorpay.key-secret=test-secret",

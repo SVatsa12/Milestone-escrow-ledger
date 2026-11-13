@@ -143,9 +143,12 @@ public class DisputeService {
                 dispute.id(),
                 milestoneId,
                 project.id(),
+                project.clientId(),
+                project.freelancerId(),
                 openedBy,
                 openedByRole,
-                reason
+                reason,
+                milestone.title()
             )
         );
 
@@ -289,9 +292,12 @@ public class DisputeService {
                 disputeId,
                 dispute.milestoneId(),
                 milestone.projectId(),
+                project.clientId(),
+                project.freelancerId(),
                 freelancerSharePaise,
                 clientSharePaise,
-                fee
+                fee,
+                milestone.title()
             )
         );
     }

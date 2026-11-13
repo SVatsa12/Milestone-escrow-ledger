@@ -25,8 +25,14 @@ spring:
     consumer:
       group-id: escrow-service
       enable-auto-commit: false
+      auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: '*'
+    listener:
+      ack-mode: RECORD
+      poll-timeout: 3000
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   redis:
     host: ${REDIS_HOST:localhost}

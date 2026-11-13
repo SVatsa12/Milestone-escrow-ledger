@@ -23,7 +23,10 @@ public final class Events {
     public record MilestoneSubmitted(
         @JsonProperty("milestone_id") Long milestoneId,
         @JsonProperty("project_id") Long projectId,
-        @JsonProperty("amount_paise") Long amountPaise
+        @JsonProperty("client_id") Long clientId,
+        @JsonProperty("amount_paise") Long amountPaise,
+        @JsonProperty("review_window_days") Integer reviewWindowDays,
+        @JsonProperty("milestone_title") String milestoneTitle
     ) {
     }
 
@@ -39,9 +42,10 @@ public final class Events {
         @JsonProperty("project_id") Long projectId,
         @JsonProperty("freelancer_id") Long freelancerId,
         @JsonProperty("amount_paise") Long amountPaise,
-        @JsonProperty("fee_paise") Long feePaise,
+        @JsonProperty("fee_amount_paise") Long feeAmountPaise,
         @JsonProperty("freelancer_net_paise") Long freelancerNetPaise,
-        @JsonProperty("auto_released") Boolean autoReleased
+        @JsonProperty("auto_released") Boolean autoReleased,
+        @JsonProperty("milestone_title") String milestoneTitle
     ) {
     }
 
@@ -64,9 +68,12 @@ public final class Events {
         @JsonProperty("dispute_id") Long disputeId,
         @JsonProperty("milestone_id") Long milestoneId,
         @JsonProperty("project_id") Long projectId,
+        @JsonProperty("client_id") Long clientId,
+        @JsonProperty("freelancer_id") Long freelancerId,
         @JsonProperty("opened_by") Long openedBy,
         @JsonProperty("opened_by_role") String openedByRole,
-        @JsonProperty("reason") String reason
+        @JsonProperty("reason") String reason,
+        @JsonProperty("milestone_title") String milestoneTitle
     ) {
     }
 
@@ -74,9 +81,12 @@ public final class Events {
         @JsonProperty("dispute_id") Long disputeId,
         @JsonProperty("milestone_id") Long milestoneId,
         @JsonProperty("project_id") Long projectId,
+        @JsonProperty("client_id") Long clientId,
+        @JsonProperty("freelancer_id") Long freelancerId,
         @JsonProperty("freelancer_share_paise") Long freelancerSharePaise,
         @JsonProperty("client_share_paise") Long clientSharePaise,
-        @JsonProperty("fee_paise") Long feePaise
+        @JsonProperty("fee_amount_paise") Long feeAmountPaise,
+        @JsonProperty("milestone_title") String milestoneTitle
     ) {
     }
 

@@ -221,6 +221,11 @@ public class EscrowService {
         }
 
         // Emit MilestoneSubmitted event
+        Project project = projectRepository.findById(milestone.projectId())
+            .orElseThrow(() -> new IllegalArgumentException("Project not found: " + milestone.projectId()));
+        
+        int reviewWindowDays = (int) (project.reviewWindow().toDays());
+        
         outboxWriter.write(
             "Milestone",
             milestoneId.toString(),
@@ -229,7 +234,10 @@ public class EscrowService {
             new Events.MilestoneSubmitted(
                 milestoneId,
                 milestone.projectId(),
-                milestone.amountPaise()
+                project.clientId(),
+                milestone.amountPaise(),
+                reviewWindowDays,
+                milestone.title()
             )
         );
     }
@@ -351,7 +359,8 @@ public class EscrowService {
                 milestone.amountPaise(),
                 fee,
                 freelancerAmount,
-                false // not auto-released
+                false, // not auto-released
+                milestone.title()
             )
         );
     }

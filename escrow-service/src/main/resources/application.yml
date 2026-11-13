@@ -78,5 +78,9 @@ ratelimit:
   transfer-requests-per-minute: 30
   payout-requests-per-minute: 5
 
+ratelimit:
+  transfer-requests-per-minute: 30
+  payout-requests-per-minute: 5
+
 chaos:
   crash-point: NONE

@@ -261,6 +261,13 @@ parameter, or an unreadable body fell through to the generic handler as 500. **F
 `400 VALIDATION_FAILED`.
 Regression: `RateLimiterIT` (a non-numeric X-Actor-Id) and `TransferApiIT.missingIdempotencyKeyIs400`.
 
+### 29. No notification was ever created
+`NotificationConsumer` read camelCase fields (`clientId`) at the envelope's top level, but real
+events nest snake_case fields (`client_id`) under `payload`, so every handler threw NPE. The old
+`ConsumersIT` never touched Kafka. **Fix:** unwrap `envelope.payload` and read the real field names,
+with a clear error when one is missing.
+Regression: `ConsumersKafkaIT.duplicateDeliveriesAreProcessedOnce`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

@@ -66,10 +66,14 @@ public class NotificationConsumer {
     }
 
     private void handleEventInternal(
-        JsonNode payload,
+        JsonNode envelope,
         String eventType,
         UUID eventId
     ) {
+        // Kafka carries the relay's EventEnvelope; the event's own fields are under "payload",
+        // in snake_case (see outbox.events.Events). This consumer used to read camelCase names at
+        // the envelope's top level, so every handler threw NPE and no notification was ever sent.
+        JsonNode payload = envelope.path("payload").isObject() ? envelope.get("payload") : envelope;
         switch (eventType) {
             case "MilestoneSubmitted" -> handleMilestoneSubmitted(payload, eventId);
             case "MilestoneReleased" -> handleMilestoneReleased(payload, eventId);
@@ -80,10 +84,10 @@ public class NotificationConsumer {
     }
 
     private void handleMilestoneSubmitted(JsonNode payload, UUID eventId) {
-        long clientId = payload.get("clientId").asLong();
-        long milestoneId = payload.get("milestoneId").asLong();
-        int reviewWindowDays = payload.get("reviewWindowDays").asInt();
-        String milestoneTitle = payload.get("milestoneTitle").asText();
+        long clientId = field(payload, "client_id").asLong();
+        long milestoneId = field(payload, "milestone_id").asLong();
+        int reviewWindowDays = field(payload, "review_window_days").asInt();
+        String milestoneTitle = field(payload, "milestone_title").asText();
 
         // Calculate auto-release date
         Instant submittedAt = clock.instant();
@@ -109,11 +113,11 @@ public class NotificationConsumer {
     }
 
     private void handleMilestoneReleased(JsonNode payload, UUID eventId) {
-        long freelancerId = payload.get("freelancerId").asLong();
-        long amountPaise = payload.get("amountPaise").asLong();
-        long feeAmountPaise = payload.get("feeAmountPaise").asLong();
+        long freelancerId = field(payload, "freelancer_id").asLong();
+        long amountPaise = field(payload, "amount_paise").asLong();
+        long feeAmountPaise = field(payload, "fee_amount_paise").asLong();
         long freelancerNetPaise = amountPaise - feeAmountPaise;
-        String milestoneTitle = payload.get("milestoneTitle").asText();
+        String milestoneTitle = field(payload, "milestone_title").asText();
 
         double rupees = freelancerNetPaise / 100.0;
         String body = String.format(
@@ -130,10 +134,10 @@ public class NotificationConsumer {
     }
 
     private void handleDisputeOpened(JsonNode payload, UUID eventId) {
-        long clientId = payload.get("clientId").asLong();
-        long freelancerId = payload.get("freelancerId").asLong();
-        String milestoneTitle = payload.get("milestoneTitle").asText();
-        String reason = payload.get("reason").asText();
+        long clientId = field(payload, "client_id").asLong();
+        long freelancerId = field(payload, "freelancer_id").asLong();
+        String milestoneTitle = field(payload, "milestone_title").asText();
+        String reason = field(payload, "reason").asText();
 
         String body = String.format(
             "Dispute opened for milestone: \"%s\"\n\n" +
@@ -154,12 +158,12 @@ public class NotificationConsumer {
     }
 
     private void handleDisputeResolved(JsonNode payload, UUID eventId) {
-        long clientId = payload.get("clientId").asLong();
-        long freelancerId = payload.get("freelancerId").asLong();
-        long freelancerSharePaise = payload.get("freelancerSharePaise").asLong();
-        long clientSharePaise = payload.get("clientSharePaise").asLong();
-        long feeAmountPaise = payload.get("feeAmountPaise").asLong();
-        String milestoneTitle = payload.get("milestoneTitle").asText();
+        long clientId = field(payload, "client_id").asLong();
+        long freelancerId = field(payload, "freelancer_id").asLong();
+        long freelancerSharePaise = field(payload, "freelancer_share_paise").asLong();
+        long clientSharePaise = field(payload, "client_share_paise").asLong();
+        long feeAmountPaise = field(payload, "fee_amount_paise").asLong();
+        String milestoneTitle = field(payload, "milestone_title").asText();
 
         double freelancerRupees = (freelancerSharePaise - feeAmountPaise) / 100.0;
         double clientRupees = clientSharePaise / 100.0;
@@ -186,5 +190,13 @@ public class NotificationConsumer {
 
         log.info("Created dispute resolution notifications: clientId={}, freelancerId={}, eventId={}",
             clientId, freelancerId, eventId);
+    }
+
+    private static JsonNode field(JsonNode payload, String name) {
+        JsonNode value = payload.get(name);
+        if (value == null || value.isNull()) {
+            throw new IllegalArgumentException("event payload is missing field '" + name + "'");
+        }
+        return value;
     }
 }

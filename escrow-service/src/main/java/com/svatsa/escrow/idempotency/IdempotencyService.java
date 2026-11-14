@@ -127,7 +127,8 @@ public class IdempotencyService {
                 .single();
 
             if (!requestHash.equals(existing.requestHash)) {
-                throw new ValidationException(
+                // P3 / AGENTS.md: 422 IDEMPOTENCY_KEY_REUSED (this used to be a 400 VALIDATION_FAILED).
+                throw new DomainException("IDEMPOTENCY_KEY_REUSED", org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
                     "Idempotency key reused with a different request body");
             }
 

@@ -191,6 +191,11 @@ V1 created `CHECK (allow_negative OR balance >= 0)` unnamed (Postgres called it 
 P2 specifies `CONSTRAINT balance_non_negative`. **Fix:** `V9` renames it.
 Regression: `LedgerSchemaIT.nonNegativeAccountCannotGoNegative`.
 
+### 18. Reusing an idempotency key with a different body was 400, not 422
+P3 and AGENTS.md specify `422 IDEMPOTENCY_KEY_REUSED`; the code threw a `ValidationException`
+(400 `VALIDATION_FAILED`). **Fix:** `DomainException("IDEMPOTENCY_KEY_REUSED", 422)`.
+Regression: `TransferApiIT.sameKeyWithDifferentBodyIs422IdempotencyKeyReused`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

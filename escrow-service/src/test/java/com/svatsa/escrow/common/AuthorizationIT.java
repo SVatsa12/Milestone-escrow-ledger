@@ -260,6 +260,41 @@ class AuthorizationIT extends AbstractIntegrationTest {
         api.expect(api.post("/api/v1/admin/deposits/simulate", key("sim-ok"), ApiClient.admin(), simulate), 201);
     }
 
+    // --- ledger endpoints ------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("transfer: ADMIN only; a client can't move money out of any wallet, even their own")
+    void transfer() throws Exception {
+        long walletA = accountId("CLIENT_WALLET:" + clientA);
+        long walletB = accountId("CLIENT_WALLET:" + clientB);
+        String body = "{\"fromAccountId\":" + walletA + ",\"toAccountId\":" + walletB + ",\"amountPaise\":500,\"memo\":\"x\"}";
+
+        forbidden(api.post("/api/v1/transfers", key("t1"), actor(clientA, "CLIENT"), body));
+        forbidden(api.post("/api/v1/transfers", key("t2"), actor(clientB, "CLIENT"), body));
+        forbidden(api.post("/api/v1/transfers", key("t3"), actor(freelancerA, "FREELANCER"), body));
+        unauthenticated(api.postWithoutActor("/api/v1/transfers", key("t4"), body));
+        assertThat(walletBalance("CLIENT_WALLET:" + clientA)).isEqualTo(1_000_000);
+        assertThat(walletBalance("CLIENT_WALLET:" + clientB)).isEqualTo(1_000_000);
+
+        api.expect(api.transfer(key("t5"), walletA, walletB, 500), 201);
+        assertThat(walletBalance("CLIENT_WALLET:" + clientB)).isEqualTo(1_000_500);
+    }
+
+    @Test
+    @DisplayName("create account: ADMIN only")
+    void createAccount() throws Exception {
+        long owner = 900_000_000L + Math.abs(UUID.randomUUID().getMostSignificantBits() % 99_999_999L);
+        String body = "{\"type\":\"CLIENT_WALLET\",\"ownerId\":" + owner + "}";
+
+        forbidden(api.post("/api/v1/accounts", null, actor(clientA, "CLIENT"), body));
+        forbidden(api.post("/api/v1/accounts", null, actor(freelancerA, "FREELANCER"), body));
+        unauthenticated(api.postWithoutActor("/api/v1/accounts", null, body));
+        assertThat(accountCount("CLIENT_WALLET:" + owner)).as("nothing created").isZero();
+
+        api.expect(api.post("/api/v1/accounts", null, ApiClient.admin(), body), 201);
+        assertThat(accountCount("CLIENT_WALLET:" + owner)).isEqualTo(1);
+    }
+
     // --- authentication --------------------------------------------------------------------------
 
     @Test
@@ -387,6 +422,10 @@ class AuthorizationIT extends AbstractIntegrationTest {
 
     private long walletBalance(String code) {
         return jdbcClient.sql("SELECT balance FROM accounts WHERE code = ?").param(code).query(Long.class).single();
+    }
+
+    private long accountCount(String code) {
+        return jdbcClient.sql("SELECT count(*) FROM accounts WHERE code = ?").param(code).query(Long.class).single();
     }
 
     private long depositCount(long clientId) {

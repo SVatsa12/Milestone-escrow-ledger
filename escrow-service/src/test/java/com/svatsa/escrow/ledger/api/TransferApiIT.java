@@ -116,6 +116,8 @@ class TransferApiIT extends AbstractIntegrationTest {
     @Test
     void missingIdempotencyKeyIs400() throws Exception {
         mockMvc.perform(post("/api/v1/transfers").contentType(MediaType.APPLICATION_JSON)
+                .header("X-Actor-Id", "1")
+                .header("X-Actor-Role", "ADMIN")
                 .content(body(a, b, 100)))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
@@ -182,6 +184,8 @@ class TransferApiIT extends AbstractIntegrationTest {
     private org.springframework.test.web.servlet.ResultActions transfer(String key, Account from, Account to, long amount)
             throws Exception {
         return mockMvc.perform(post("/api/v1/transfers")
+            .header("X-Actor-Id", "1")
+            .header("X-Actor-Role", "ADMIN")
             .header("Idempotency-Key", key)
             .contentType(MediaType.APPLICATION_JSON)
             .content(body(from, to, amount)));

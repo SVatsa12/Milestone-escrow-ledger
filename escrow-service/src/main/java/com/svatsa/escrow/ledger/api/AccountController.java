@@ -50,14 +50,14 @@ public class AccountController {
     }
 
     /**
-     * Create a new account (ADMIN only).
+     * Create a new account. ADMIN only (403 FORBIDDEN otherwise, 401 without actor headers).
      */
     @PostMapping("/accounts")
     public ResponseEntity<Account> createAccount(
+        Actor actor,
         @RequestBody CreateAccountRequest request
     ) {
-        // In a real system, check X-Actor-Role header for ADMIN
-        // For now, assume all API users are ADMIN
+        Authz.requireAdmin(actor, "create an account");
 
         String code = switch (request.type()) {
             case CLIENT_WALLET -> "CLIENT_WALLET:" + request.ownerId();
@@ -103,13 +103,16 @@ public class AccountController {
     }
 
     /**
-     * Transfer money between accounts (ADMIN only, idempotent).
+     * Transfer money between any two accounts (idempotent). ADMIN only: it can move money out of
+     * anyone's wallet, so a non-admin is 403 FORBIDDEN before anything is checked or posted.
      */
     @PostMapping("/transfers")
     public ResponseEntity<Map<String, Object>> transfer(
+        Actor actor,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody TransferRequest request
     ) {
+        Authz.requireAdmin(actor, "transfer between accounts");
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ValidationException("Idempotency-Key header is required");
         }

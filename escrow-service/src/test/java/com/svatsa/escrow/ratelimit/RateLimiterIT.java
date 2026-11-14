@@ -110,16 +110,20 @@ class RateLimiterIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("requests without X-Actor-Id are not limited")
+    @DisplayName("requests without X-Actor-Id are not limited (they are rejected as 401 instead)")
     void requestsWithoutActorAreNotLimited() throws Exception {
+        // Transfers are ADMIN-only now, so an anonymous request is 401 UNAUTHENTICATED; the point
+        // here is that request N+1 is still 401, never 429, and moves no money.
         for (int i = 0; i < DEFAULT_LIMIT + 1; i++) {
             mockMvc.perform(post("/api/v1/transfers")
                     .header("Idempotency-Key", UUID.randomUUID().toString())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(transferBody()))
-                .andExpect(status().isCreated())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(header().doesNotExist("X-RateLimit-Limit"));
         }
+        assertThat(balance(to)).isZero();
     }
 
     @Test

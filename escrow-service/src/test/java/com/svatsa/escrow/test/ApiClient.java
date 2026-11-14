@@ -75,6 +75,13 @@ public final class ApiClient {
         return response.body().isBlank() ? json.nullNode() : json.readTree(response.body());
     }
 
+    /** POST /api/v1/transfers as ADMIN (the only role allowed to call it). */
+    public HttpResponse<String> transfer(String idempotencyKey, long fromAccountId, long toAccountId, long amountPaise)
+            throws Exception {
+        return post("/api/v1/transfers", idempotencyKey, admin(), "{\"fromAccountId\":" + fromAccountId
+            + ",\"toAccountId\":" + toAccountId + ",\"amountPaise\":" + amountPaise + ",\"memo\":\"test\"}");
+    }
+
     public long createUser(String name, String role) throws Exception {
         return expect(post("/api/escrow/users", null, admin(), "{\"name\":\"" + name + "\",\"role\":\"" + role + "\"}"), 201)
             .path("id").asLong();

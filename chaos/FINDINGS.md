@@ -363,16 +363,46 @@ These were listed as open issues below; each is now closed with its own tests.
   against the old code), `DepositWebhookIT.depositKeyHoldsWithoutTheStatusGuard`, and
   `i10FlagsWrongKeys`.
 
+### 38. Transfers and account creation were open to anyone — closed
+- **Gap:** `POST /api/v1/transfers` (move money between *any* two accounts) and
+  `POST /api/v1/accounts` said "ADMIN only" in their javadoc but took no actor, so any caller,
+  with or without headers, could drain any wallet.
+- **Fix:** both take the `Actor` and call `Authz.requireAdmin` first: a CLIENT or FREELANCER is
+  403 FORBIDDEN and nothing is validated, posted or created; no actor headers is 401.
+  `TransferApiIT` and `ApiClient.transfer` now send ADMIN headers (the k6 scripts, `run-bench.sh`
+  and the other transfer tests already did). `RateLimiterIT`'s "no X-Actor-Id is not limited" case
+  now expects 401 on every request, never 429, and no money moved.
+- **Audit of every mutating endpoint** (`@PostMapping`; there are no `@PutMapping`,
+  `@PatchMapping` or `@DeleteMapping`), with the role it requires and its `AuthorizationIT` test:
+
+  | endpoint | allowed | AuthorizationIT |
+  |---|---|---|
+  | `POST /api/escrow/projects` | the named CLIENT, or ADMIN | `createProject` |
+  | `POST /api/escrow/projects/{id}/fund` | the project's CLIENT | `fund` |
+  | `POST /api/escrow/milestones/{id}/submit` | the project's FREELANCER | `submit` |
+  | `POST /api/escrow/milestones/{id}/approve` | the project's CLIENT (SYSTEM internally) | `approve` |
+  | `POST /api/escrow/milestones/{id}/cancel` | the project's CLIENT | `cancel` |
+  | `POST /api/escrow/disputes` | the project's CLIENT or FREELANCER | `openDispute` |
+  | `POST /api/escrow/disputes/{id}/resolve` | ADMIN | `resolveDispute` |
+  | `POST /api/v1/deposits` | that CLIENT | `deposit` |
+  | `POST /api/v1/payouts` | that FREELANCER, own wallet | `payout`, `payoutOnlyFromOwnWallet` |
+  | `POST /api/v1/transfers` | ADMIN | `transfer` |
+  | `POST /api/v1/accounts` | ADMIN | `createAccount` |
+  | `POST /api/v1/admin/deposits/simulate` | ADMIN | `adminEndpoints` |
+  | `POST /api/v1/admin/recon/run` | ADMIN | `adminEndpoints` |
+  | `POST /webhooks/razorpay` | no actor: authenticated by the HMAC signature | `DepositWebhookIT` (bad signature is 400) |
+  | `POST /api/escrow/users` | **no actor check** (see open issues) | not covered |
+- **Regression:** `AuthorizationIT.transfer`, `AuthorizationIT.createAccount`.
+
 ## Open issues (not fixed yet)
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
   - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
   - P10's mock payout provider (the module is still an empty app; tests use `FakePayoutProvider`).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
-- **Ledger transfer and account endpoints have no actor check.** `POST /api/v1/transfers` and
-  `POST /api/v1/accounts` say "ADMIN only" in their javadoc but accept any caller (the load
-  scripts and several tests drive transfers with no or non-admin headers). Out of scope for #36,
-  which covered escrow, disputes, deposits, payouts and the admin endpoints.
+- **`POST /api/escrow/users` has no actor check.** Anyone can create a CLIENT or FREELANCER
+  user (and with it a wallet). It is the stub's registration endpoint, so there is no obvious
+  role to require yet; callers (k6, `ApiClient`) already send ADMIN headers.
 - **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
   Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
   real one.

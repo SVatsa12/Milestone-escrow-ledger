@@ -56,7 +56,17 @@ public class ProjectRepository {
     /**
      * Saves a new project and returns it with the auto-generated ID.
      */
+    /**
+     * Reserve the next project id from the projects.id sequence.
+     */
+    public long nextId() {
+        return jdbc.sql("SELECT nextval(pg_get_serial_sequence('projects', 'id'))")
+            .query(Long.class)
+            .single();
+    }
+
     public Project save(
+        long id,
         Long clientId,
         Long freelancerId,
         String title,
@@ -64,15 +74,16 @@ public class ProjectRepository {
         Long escrowAccountId,
         Long disputeHoldAccountId
     ) {
-        Long id = jdbc.sql("""
+        Long savedId = jdbc.sql("""
             INSERT INTO projects (
-                client_id, freelancer_id, title, review_window,
+                id, client_id, freelancer_id, title, review_window,
                 status, escrow_account_id, dispute_hold_account_id,
                 created_at, version
             )
-            VALUES (?, ?, ?, ?::interval, ?, ?, ?, now(), 0)
+            VALUES (?, ?, ?, ?, ?::interval, ?, ?, ?, now(), 0)
             RETURNING id
             """)
+            .param(id)
             .param(clientId)
             .param(freelancerId)
             .param(title)
@@ -83,7 +94,7 @@ public class ProjectRepository {
             .query(Long.class)
             .single();
 
-        return findById(id)
+        return findById(savedId)
             .orElseThrow(() -> new IllegalStateException("Could not retrieve saved project"));
     }
 

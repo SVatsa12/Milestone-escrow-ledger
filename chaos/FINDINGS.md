@@ -103,6 +103,17 @@ Found as soon as the chaos context booted against real Postgres:
 These turned up when an end-to-end API test and a k6 smoke run drove every endpoint the load
 scripts use against real Postgres. Each fix has its own regression test, named below.
 
+### 8. Concurrent projects shared escrow accounts
+- **Symptom:** I6 violations after a 15-second k6 smoke run, e.g. "ESCROW account 41 has
+  balance 20600 but in-escrow milestones sum to 0". Projects 6 and 10 both pointed at account 41.
+- **Root cause:** `createProject` named the accounts `"ESCROW:" + System.currentTimeMillis()`.
+  Two projects created in the same millisecond got the same code, and
+  `AccountRepository.create`'s `ON CONFLICT DO NOTHING` quietly returned the first project's
+  account to the second. Their escrow and dispute money mixed.
+- **Fix:** reserve the project id from its sequence first, then create `ESCROW:{projectId}` and
+  `DISPUTE_HOLD:{projectId}` as the AGENTS.md account model specifies.
+- **Regression:** `ProjectApiIT.concurrentProjectsDoNotShareAccounts` (30 concurrent creates).
+
 ### 9. Creating a project always failed on Postgres
 `review_window` (INTERVAL) was bound as varchar and read back with no INTERVAL→Duration
 converter. Fixed with `?::interval` on write and an explicit row mapper on read.

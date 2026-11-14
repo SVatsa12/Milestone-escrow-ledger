@@ -75,23 +75,20 @@ public class EscrowService {
         userRepository.findById(freelancerId)
             .orElseThrow(() -> new IllegalArgumentException("Freelancer not found: " + freelancerId));
 
-        // Create ESCROW and DISPUTE_HOLD accounts
+        // Reserve the project id first so the accounts get their real codes, ESCROW:{projectId}
+        // and DISPUTE_HOLD:{projectId} (AGENTS.md account model). They used to be named
+        // "ESCROW:" + currentTimeMillis(): two projects created in the same millisecond got the
+        // same code, AccountRepository.create's ON CONFLICT DO NOTHING handed the second one the
+        // first one's account, and the two projects' escrow money mixed (I6 violations under load).
+        long projectId = projectRepository.nextId();
+
         var escrowAccount = accountRepository.create(
-            "ESCROW:" + System.currentTimeMillis(), // temp code, will be updated
-            AccountType.ESCROW,
-            null,
-            false
-        );
-
+            "ESCROW:" + projectId, AccountType.ESCROW, null, false);
         var disputeHoldAccount = accountRepository.create(
-            "DISPUTE_HOLD:" + System.currentTimeMillis(), // temp code
-            AccountType.DISPUTE_HOLD,
-            null,
-            false
-        );
+            "DISPUTE_HOLD:" + projectId, AccountType.DISPUTE_HOLD, null, false);
 
-        // Save project
         Project project = projectRepository.save(
+            projectId,
             clientId,
             freelancerId,
             title,

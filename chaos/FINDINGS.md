@@ -268,6 +268,15 @@ events nest snake_case fields (`client_id`) under `payload`, so every handler th
 with a clear error when one is missing.
 Regression: `ConsumersKafkaIT.duplicateDeliveriesAreProcessedOnce`.
 
+### 30. Poison messages never reached a dead-letter topic
+The error handler was a bare `new DefaultErrorHandler()`: failed records were retried 9 times,
+logged and dropped (its javadoc claimed "implicit .DLT support"). Once a recoverer was added, Spring
+Kafka's default destination was `<topic>-dlt` on the same partition number, a topic nothing creates,
+so the producer looped on `UNKNOWN_TOPIC_OR_PARTITION`. **Fix:** a `DeadLetterPublishingRecoverer` to
+`<topic>.DLT` (the name P8 and kafka-init use), with its own producer (raw `byte[]` for records that
+failed deserialization, JSON otherwise), and the three `.DLT` topics declared as beans.
+Regression: `ConsumersKafkaIT.poisonMessageGoesToDltAndDoesNotBlock`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

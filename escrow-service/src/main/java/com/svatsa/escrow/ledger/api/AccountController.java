@@ -84,6 +84,22 @@ public class AccountController {
     }
 
     /**
+     * Look an account up by its business code, e.g. CLIENT_WALLET:42 (wallets are created by a
+     * DB trigger when a user is created, so callers know the code but not the id).
+     */
+    @GetMapping("/accounts/by-code/{code}")
+    public ResponseEntity<Map<String, Object>> getAccountByCode(@PathVariable String code) {
+        Account account = accountRepository.findByCode(code)
+            .orElseThrow(() -> new com.svatsa.escrow.common.DomainException("NOT_FOUND",
+                HttpStatus.NOT_FOUND, "Account not found: " + code));
+        Map<String, Object> response = new HashMap<>();
+        response.put("id", account.id());
+        response.put("code", account.code());
+        response.put("balance", account.balance());
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * Transfer money between accounts (ADMIN only, idempotent).
      */
     @PostMapping("/transfers")

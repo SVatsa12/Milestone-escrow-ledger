@@ -60,6 +60,8 @@ class TransferIdempotencyRegressionIT extends AbstractToxiproxyIT {
         // Storing the response into the JSONB column used to fail, so every transfer was a 500.
         assertThat(first.statusCode()).as(first.body()).isEqualTo(201);
         assertThat(retry.statusCode()).as(retry.body()).isEqualTo(201);
+        assertThat(first.headers().firstValue("Idempotent-Replayed")).isEmpty();
+        assertThat(retry.headers().firstValue("Idempotent-Replayed")).hasValue("true");
         JsonNode a = json.readTree(first.body());
         JsonNode b = json.readTree(retry.body());
         assertThat(b.path("entryId").asLong()).isEqualTo(a.path("entryId").asLong());

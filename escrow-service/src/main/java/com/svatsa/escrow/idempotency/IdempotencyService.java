@@ -137,6 +137,7 @@ public class IdempotencyService {
                 T body = (T) objectMapper.readValue(existing.responseBody, Object.class);
                 return ResponseEntity
                     .status(existing.responseStatus)
+                    .header("Idempotent-Replayed", "true")
                     .body(body);
             } catch (Exception e) {
                 throw new RuntimeException("Error deserializing cached response", e);

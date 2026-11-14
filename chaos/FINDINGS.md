@@ -282,6 +282,14 @@ The relay published without a key, so a project's events were spread over partit
 consumed out of order (P8 asks for "the expected sequence"). **Fix:** key = `aggregateType:aggregateId`.
 Regression: `ConsumersKafkaIT.lifecycleProducesTheExpectedAuditSequence`.
 
+### 32. Approve and auto-release could deadlock
+`approveMilestone` posted the release (locking ESCROW, the freelancer wallet and PLATFORM_FEES)
+before its conditional milestone update; `AutoReleaseJob` locks the milestone first
+(`FOR UPDATE SKIP LOCKED`) and then calls `approveMilestone`. A client approving at the moment the
+job fired deadlocked. `openDispute` had the same inversion. **Fix:** the conditional state change
+comes first in both (milestone row, then accounts), so a loser of the race stops before touching money.
+Regression: `AutoReleaseIT.approveVersusAutoReleaseReleasesOnce`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

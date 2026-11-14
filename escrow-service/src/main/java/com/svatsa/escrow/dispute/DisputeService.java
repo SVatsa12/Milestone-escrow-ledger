@@ -89,21 +89,6 @@ public class DisputeService {
         var disputeHoldAccount = accountRepository.findById(project.disputeHoldAccountId())
             .orElseThrow();
 
-        // Post: ESCROW → DISPUTE_HOLD
-        ledgerService.post(
-            new PostingRequest(
-                "TRANSFER",
-                "MILESTONE",
-                milestoneId.toString(),
-                idempotencyKey,
-                "Freeze dispute: " + reason,
-                List.of(
-                    new Leg(escrowAccount.id(), -milestone.amountPaise()),
-                    new Leg(disputeHoldAccount.id(), milestone.amountPaise())
-                )
-            )
-        );
-
         // Transition: SUBMITTED → DISPUTED
         boolean success = milestoneRepository.transitionState(
             milestoneId,
@@ -118,6 +103,23 @@ public class DisputeService {
                 MilestoneState.DISPUTED
             );
         }
+
+        // Freeze the money only after winning SUBMITTED → DISPUTED: that update locks the milestone
+        // row before the accounts, the same order AutoReleaseJob uses (see approveMilestone).
+        // Post: ESCROW → DISPUTE_HOLD
+        ledgerService.post(
+            new PostingRequest(
+                "TRANSFER",
+                "MILESTONE",
+                milestoneId.toString(),
+                idempotencyKey,
+                "Freeze dispute: " + reason,
+                List.of(
+                    new Leg(escrowAccount.id(), -milestone.amountPaise()),
+                    new Leg(disputeHoldAccount.id(), milestone.amountPaise())
+                )
+            )
+        );
 
         // Save dispute record (may throw DisputeAlreadyOpenException if constraint violated)
         Dispute dispute;

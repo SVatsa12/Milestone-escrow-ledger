@@ -280,6 +280,25 @@ public class EscrowService {
         var platformFeesAccount = accountRepository.findByCode("PLATFORM_FEES")
             .orElseThrow();
 
+        // Transition SUBMITTED -> APPROVED
+        boolean approveSuccess = milestoneRepository.transitionState(
+            milestoneId,
+            MilestoneState.SUBMITTED,
+            MilestoneState.APPROVED,
+            milestone.version()
+        );
+
+        if (!approveSuccess) {
+            throw InvalidStateTransitionException.invalidTransition(
+                milestone.state(),
+                MilestoneState.APPROVED
+            );
+        }
+
+        // Move the money only after winning the conditional SUBMITTED -> APPROVED update above.
+        // That update locks the milestone row first, the same order AutoReleaseJob uses (it claims
+        // the milestone with FOR UPDATE, then calls this method). Posting first locked the accounts
+        // before the milestone, and an approve racing the job deadlocked (found by AutoReleaseIT).
         // Create 3-leg journal entry: ESCROW -> FREELANCER_WALLET + PLATFORM_FEES
         ledgerService.post(
             new PostingRequest(
@@ -295,21 +314,6 @@ public class EscrowService {
                 )
             )
         );
-
-        // Transition SUBMITTED -> APPROVED
-        boolean approveSuccess = milestoneRepository.transitionState(
-            milestoneId,
-            MilestoneState.SUBMITTED,
-            MilestoneState.APPROVED,
-            milestone.version()
-        );
-
-        if (!approveSuccess) {
-            throw InvalidStateTransitionException.invalidTransition(
-                milestone.state(),
-                MilestoneState.APPROVED
-            );
-        }
 
         // Refresh milestone to get updated version
         Milestone refreshed = milestoneRepository.findById(milestoneId)

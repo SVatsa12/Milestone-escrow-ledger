@@ -62,6 +62,25 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Malformed requests (bad header value, missing required header or parameter, unreadable
+     * body) are the client's fault: 400 VALIDATION_FAILED. They used to fall through to 500.
+     */
+    @ExceptionHandler({
+        org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+        org.springframework.web.bind.MissingRequestHeaderException.class,
+        org.springframework.web.bind.MissingServletRequestParameterException.class,
+        org.springframework.http.converter.HttpMessageNotReadableException.class
+    })
+    public ResponseEntity<ProblemDetail> handleBadRequest(Exception ex) {
+        String detail = ex instanceof org.springframework.web.method.annotation.MethodArgumentTypeMismatchException m
+            ? "Invalid value for " + m.getName()
+            : ex instanceof org.springframework.http.converter.HttpMessageNotReadableException
+                ? "Request body is missing or not valid JSON"
+                : ex.getMessage();
+        return problem(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", detail);
+    }
+
+    /**
      * Services throw IllegalArgumentException for unknown ids ("... not found") and bad input.
      */
     @ExceptionHandler(IllegalArgumentException.class)

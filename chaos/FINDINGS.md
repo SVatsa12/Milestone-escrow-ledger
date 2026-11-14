@@ -255,6 +255,12 @@ loaded, even with test-mode keys configured. **Fix:** the SDK gateway when a key
 when it's blank.
 Regression: `DepositWebhookIT` (runs with no key id, so the fake is selected).
 
+### 28. Malformed requests were 500, not 400
+A bad header value (`MethodArgumentTypeMismatchException`), a missing required header or
+parameter, or an unreadable body fell through to the generic handler as 500. **Fix:**
+`400 VALIDATION_FAILED`.
+Regression: `RateLimiterIT` (a non-numeric X-Actor-Id) and `TransferApiIT.missingIdempotencyKeyIs400`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

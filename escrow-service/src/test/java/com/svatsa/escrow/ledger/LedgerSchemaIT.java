@@ -1,230 +1,162 @@
 package com.svatsa.escrow.ledger;
 
 import com.svatsa.escrow.test.AbstractIntegrationTest;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Integration tests proving the ledger schema DB guards work correctly.
- * 
- * These tests operate directly with SQL through JdbcClient to verify that
- * the database constraints (triggers, CHECK, UNIQUE) enforce invariants.
- * 
- * NOTE: These tests require Postgres with Flyway migrations. For development,
- * run with `docker compose up -d` then override the test database URL.
- * Currently disabled for local H2 testing; enable in CI where Postgres is available.
+ * P2: proves the database guards on their own, in raw SQL through JdbcClient (no LedgerService).
+ *
+ * Every scenario leaves the shared database consistent, because the @AfterEach invariant check
+ * covers the whole ledger:
+ * - scenarios that must fail at commit roll back by themselves;
+ * - "allowed but not a real posting" writes are asserted inside a transaction that is then
+ *   rolled back;
+ * - the one entry that commits also moves the cached balances, exactly as LedgerService does.
+ * Codes and idempotency keys are unique per run.
  */
-@Disabled("Requires Postgres; enable in CI or with docker-compose")
 class LedgerSchemaIT extends AbstractIntegrationTest {
 
-    @Autowired
-    private TransactionTemplate transactionTemplate;
+    @Autowired private TransactionTemplate tx;
+    @Autowired private AccountRepository accountRepository;
 
-    @Autowired
-    private AccountRepository accountRepository;
+    private final String run = UUID.randomUUID().toString().substring(0, 8);
 
     @Test
     void unbalancedEntryFailsAtCommit() {
-        // Arrange: create two accounts
-        Account from = accountRepository.create("TEST:FROM", AccountType.CLIENT_WALLET, null, false);
-        Account to = accountRepository.create("TEST:TO", AccountType.FREELANCER_WALLET, null, false);
-        
-        // Fund them
-        jdbcClient.sql("UPDATE accounts SET balance = 100 WHERE id = ?").param(from.id()).update();
-        jdbcClient.sql("UPDATE accounts SET balance = 100 WHERE id = ?").param(to.id()).update();
-
-        // Act & Assert: try to insert an unbalanced entry (sum = +1 instead of 0)
-        // The deferred constraint trigger should fire at commit
-        assertThatThrownBy(() -> 
-            transactionTemplate.executeWithoutResult(status -> {
-                jdbcClient.sql("""
-                    INSERT INTO journal_entries (type, idempotency_key)
-                    VALUES (?, ?)
-                    """)
-                    .param("TEST")
-                    .param("unbalanced-key-1")
-                    .update();
-
-                long entryId = jdbcClient.sql("SELECT LASTVAL()").query(Long.class).single();
-
-                // Insert unbalanced postings: +100 to "to", nothing from "from"
-                // Sum = +100, not 0
-                jdbcClient.sql("""
-                    INSERT INTO postings (entry_id, account_id, amount)
-                    VALUES (?, ?, ?)
-                    """)
-                    .param(entryId)
-                    .param(to.id())
-                    .param(100)
-                    .update();
-            })
-        )
-        .hasMessageContaining("does not balance");
+        Account to = account("UNBAL_TO", false);
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> {
+            long entryId = insertEntry("unbalanced");
+            insertPosting(entryId, to.id(), 100);   // sum = +100
+        }))
+            .hasMessageContaining("does not balance");
     }
 
     @Test
     void entryWithSinglePostingFailsAtCommit() {
-        // Arrange
-        Account acc = accountRepository.create("TEST:SINGLE", AccountType.CLIENT_WALLET, null, false);
-        
-        // Act & Assert: try to insert an entry with only 1 posting
-        assertThatThrownBy(() ->
-            transactionTemplate.executeWithoutResult(status -> {
-                jdbcClient.sql("""
-                    INSERT INTO journal_entries (type, idempotency_key)
-                    VALUES (?, ?)
-                    """)
-                    .param("TEST")
-                    .param("single-posting-key-1")
-                    .update();
+        // A single posting can never sum to 0 (postings.amount <> 0 is enforced), so the trigger
+        // reports the imbalance first; what matters is that the commit is refused.
+        Account acc = account("SINGLE", false);
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> {
+            long entryId = insertEntry("single");
+            insertPosting(entryId, acc.id(), 100);
+        }))
+            .hasMessageContaining("does not balance");
+    }
 
-                long entryId = jdbcClient.sql("SELECT LASTVAL()").query(Long.class).single();
-
-                // Insert only 1 posting
-                jdbcClient.sql("""
-                    INSERT INTO postings (entry_id, account_id, amount)
-                    VALUES (?, ?, ?)
-                    """)
-                    .param(entryId)
-                    .param(acc.id())
-                    .param(100)
-                    .update();
-            })
-        )
-        .hasMessageContaining("has only");
+    @Test
+    void entryWithNoPostingsFailsAtCommit() {
+        // Used to commit: the balancing trigger fired only on postings inserts (fixed in V9).
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> insertEntry("empty")))
+            .hasMessageContaining("has only 0 posting");
     }
 
     @Test
     void balancedEntryCommits() {
-        // Arrange
-        Account from = accountRepository.create("TEST:BALANCED_FROM", AccountType.CLIENT_WALLET, null, false);
-        Account to = accountRepository.create("TEST:BALANCED_TO", AccountType.FREELANCER_WALLET, null, false);
-        
-        jdbcClient.sql("UPDATE accounts SET balance = 100 WHERE id = ?").param(from.id()).update();
-        jdbcClient.sql("UPDATE accounts SET balance = 100 WHERE id = ?").param(to.id()).update();
+        String key = key("balanced");
+        Account from = account("BAL_FROM", true);   // may go negative, like EXTERNAL_BANK
+        Account to = account("BAL_TO", false);
 
-        // Act: insert a balanced entry
-        transactionTemplate.executeWithoutResult(status -> {
-            jdbcClient.sql("""
-                INSERT INTO journal_entries (type, idempotency_key)
-                VALUES (?, ?)
-                """)
-                .param("TEST")
-                .param("balanced-key-1")
-                .update();
-
-            long entryId = jdbcClient.sql("SELECT LASTVAL()").query(Long.class).single();
-
-            // Insert balanced postings: -50 from "from", +50 to "to" (sum = 0)
-            jdbcClient.sql("""
-                INSERT INTO postings (entry_id, account_id, amount)
-                VALUES (?, ?, ?), (?, ?, ?)
-                """)
-                .param(entryId).param(from.id()).param(-50)
-                .param(entryId).param(to.id()).param(50)
-                .update();
+        tx.executeWithoutResult(s -> {
+            long entryId = insertEntry(key);
+            insertPosting(entryId, from.id(), -50);
+            insertPosting(entryId, to.id(), 50);
+            // Keep the cached projection in step with the postings, as LedgerService.post does.
+            moveBalance(from.id(), -50);
+            moveBalance(to.id(), 50);
         });
 
-        // Assert: entry was committed
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = ?")
-            .param("balanced-key-1")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(1);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = ?")
+            .param(key).query(Long.class).single()).isEqualTo(1);
     }
 
     @Test
-    void updateOnJournalEntriesFails() {
-        // Arrange: create a journal entry
-        transactionTemplate.executeWithoutResult(status -> {
-            jdbcClient.sql("""
-                INSERT INTO journal_entries (type, idempotency_key)
-                VALUES (?, ?)
-                """)
-                .param("TEST")
-                .param("immutable-key-1")
-                .update();
-        });
+    void updateOnJournalEntriesAndPostingsFails() {
+        long entryId = committedBalancedEntry("upd");
 
-        // Act & Assert: try to UPDATE it
-        long entryId = jdbcClient.sql("SELECT id FROM journal_entries WHERE idempotency_key = ?")
-            .param("immutable-key-1")
-            .query(Long.class)
-            .single();
-
-        assertThatThrownBy(() ->
-            jdbcClient.sql("UPDATE journal_entries SET type = ? WHERE id = ?")
-                .param("MODIFIED")
-                .param(entryId)
-                .update()
-        )
-        .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> jdbcClient.sql("UPDATE journal_entries SET type = 'MODIFIED' WHERE id = ?")
+            .param(entryId).update())
+            .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> jdbcClient.sql("UPDATE postings SET amount = 5 WHERE entry_id = ?")
+            .param(entryId).update())
+            .hasMessageContaining("immutable");
     }
 
     @Test
-    void deleteOnJournalEntriesFails() {
-        // Arrange: create a journal entry
-        transactionTemplate.executeWithoutResult(status -> {
-            jdbcClient.sql("""
-                INSERT INTO journal_entries (type, idempotency_key)
-                VALUES (?, ?)
-                """)
-                .param("TEST")
-                .param("delete-key-1")
-                .update();
-        });
+    void deleteOnJournalEntriesAndPostingsFails() {
+        long entryId = committedBalancedEntry("del");
 
-        long entryId = jdbcClient.sql("SELECT id FROM journal_entries WHERE idempotency_key = ?")
-            .param("delete-key-1")
-            .query(Long.class)
-            .single();
-
-        // Act & Assert: try to DELETE it
-        assertThatThrownBy(() ->
-            jdbcClient.sql("DELETE FROM journal_entries WHERE id = ?")
-                .param(entryId)
-                .update()
-        )
-        .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> jdbcClient.sql("DELETE FROM postings WHERE entry_id = ?")
+            .param(entryId).update())
+            .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> jdbcClient.sql("DELETE FROM journal_entries WHERE id = ?")
+            .param(entryId).update())
+            .hasMessageContaining("immutable");
     }
 
     @Test
     void nonNegativeAccountCannotGoNegative() {
-        // Arrange
-        Account acc = accountRepository.create("TEST:NON_NEGATIVE", AccountType.CLIENT_WALLET, null, false);
-        
-        // Act & Assert: try to set balance negative
-        assertThatThrownBy(() ->
-            jdbcClient.sql("UPDATE accounts SET balance = ? WHERE id = ?")
-                .param(-1)
-                .param(acc.id())
-                .update()
-        )
-        .hasMessageContaining("CHECK");
+        Account acc = account("NON_NEG", false);
+        assertThatThrownBy(() -> jdbcClient.sql("UPDATE accounts SET balance = -1 WHERE id = ?")
+            .param(acc.id()).update())
+            .hasMessageContaining("balance_non_negative");
     }
 
     @Test
-    void negativeAccountCanGoNegative() {
-        // Arrange: create an account that allows negative (like external bank)
-        Account acc = accountRepository.create("TEST:NEGATIVE", AccountType.EXTERNAL_BANK, null, true);
-        
-        // Act: set it negative (should succeed)
-        jdbcClient.sql("UPDATE accounts SET balance = ? WHERE id = ?")
-            .param(-1000)
-            .param(acc.id())
-            .update();
+    void allowNegativeAccountCanGoNegative() {
+        Account acc = account("NEG_OK", true);
+        // Assert inside a transaction and roll it back: a balance with no postings behind it
+        // would (correctly) fail the I3 check after the test.
+        tx.executeWithoutResult(s -> {
+            jdbcClient.sql("UPDATE accounts SET balance = -1000 WHERE id = ?").param(acc.id()).update();
+            assertThat(jdbcClient.sql("SELECT balance FROM accounts WHERE id = ?")
+                .param(acc.id()).query(Long.class).single()).isEqualTo(-1000);
+            s.setRollbackOnly();
+        });
+    }
 
-        // Assert
-        Long balance = jdbcClient.sql("SELECT balance FROM accounts WHERE id = ?")
-            .param(acc.id())
-            .query(Long.class)
-            .single();
-        assertThat(balance).isEqualTo(-1000);
+    // --- raw SQL helpers ---------------------------------------------------------------------
+
+    private Account account(String name, boolean allowNegative) {
+        return accountRepository.create("SCHEMA:" + name + ":" + run,
+            allowNegative ? AccountType.EXTERNAL_BANK : AccountType.CLIENT_WALLET, null, allowNegative);
+    }
+
+    private String key(String name) {
+        return "schema-" + name + "-" + run;
+    }
+
+    private long insertEntry(String name) {
+        return jdbcClient.sql("INSERT INTO journal_entries (type, idempotency_key) VALUES ('TEST', ?) RETURNING id")
+            .param(name.startsWith("schema-") ? name : key(name))
+            .query(Long.class).single();
+    }
+
+    private void insertPosting(long entryId, long accountId, long amount) {
+        jdbcClient.sql("INSERT INTO postings (entry_id, account_id, amount) VALUES (?, ?, ?)")
+            .param(entryId).param(accountId).param(amount).update();
+    }
+
+    private void moveBalance(long accountId, long delta) {
+        jdbcClient.sql("UPDATE accounts SET balance = balance + ? WHERE id = ?").param(delta).param(accountId).update();
+    }
+
+    private long committedBalancedEntry(String name) {
+        Account from = account(name + "_FROM", true);
+        Account to = account(name + "_TO", false);
+        return tx.execute(s -> {
+            long entryId = insertEntry(name);
+            insertPosting(entryId, from.id(), -10);
+            insertPosting(entryId, to.id(), 10);
+            moveBalance(from.id(), -10);
+            moveBalance(to.id(), 10);
+            return entryId;
+        });
     }
 }

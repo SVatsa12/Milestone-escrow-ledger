@@ -1,313 +1,217 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.Money;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.LedgerService;
+import com.svatsa.escrow.ledger.Leg;
+import com.svatsa.escrow.ledger.PostingRequest;
 import com.svatsa.escrow.test.AbstractIntegrationTest;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration tests for auto-release.
- *
- * Tests the auto-release flow:
- * 1. Create and fund project
- * 2. Submit milestone
- * 3. AutoReleaseJob runs before review window expires → milestone stays SUBMITTED
- * 4. Clock advances past review window
- * 5. AutoReleaseJob runs again → milestone auto-released
- * 6. Verify exact balances and invariants
- *
- * Note: Requires Postgres with Flyway migrations.
- * Disabled for H2 in-memory tests. Enable in CI with docker-compose.
+ * P6 auto-release, driven by the MutableClock (the old version never moved the clock, so the
+ * job never had anything to release, and three of its tests asserted nothing).
+ * Each test creates its own client, freelancer and project; "released exactly once" is proven
+ * by the money: the project's ESCROW drops by the amount once, and the freelancer gets amount − fee.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest
-@ActiveProfiles("test")
-@DisplayName("AutoRelease Integration Tests")
+@DisplayName("Auto-release")
 class AutoReleaseIT extends AbstractIntegrationTest {
 
-    @Autowired
-    private EscrowService escrowService;
+    private static final Duration WINDOW = Duration.ofDays(3);
+    private static final int FEE_BPS = 500;
 
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private ProjectRepository projectRepository;
-
-    @Autowired
-    private MilestoneRepository milestoneRepository;
-
-    @Autowired
-    private AccountRepository accountRepository;
-
-    @Autowired
-    private LedgerService ledgerService;
-
-    @Autowired
-    private AutoReleaseJob autoReleaseJob;
+    @Autowired private EscrowService escrowService;
+    @Autowired private UserRepository userRepository;
+    @Autowired private MilestoneRepository milestoneRepository;
+    @Autowired private AccountRepository accountRepository;
+    @Autowired private LedgerService ledgerService;
+    @Autowired private TransactionTemplate tx;
+    @Autowired private AutoReleaseJob autoReleaseJob;
 
     private User client;
     private User freelancer;
-    private Project project;
 
     @BeforeEach
     void setUp() {
-        clearLedger();
-
-        client = userRepository.save("Alice (Client)", "CLIENT");
-        freelancer = userRepository.save("Bob (Freelancer)", "FREELANCER");
-
-        // Seed client's wallet with 1,000,000 paise
-        var clientWallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id())
-            .orElseThrow();
-        var externalBank = accountRepository.create(
-            "EXTERNAL_BANK:RAZORPAY",
-            com.svatsa.escrow.ledger.AccountType.EXTERNAL_BANK,
-            null,
-            true
-        );
-
-        ledgerService.post(
-            new com.svatsa.escrow.ledger.PostingRequest(
-                "DEPOSIT",
-                "USER",
-                client.id().toString(),
-                "deposit:rzp:setup",
-                "Setup deposit",
-                List.of(
-                    new com.svatsa.escrow.ledger.Leg(externalBank.id(), -1_000_000),
-                    new com.svatsa.escrow.ledger.Leg(clientWallet.id(), 1_000_000)
-                )
-            )
-        );
-
-        // Create project with 3-day review window
-        Instant now = clock.instant();
-        Instant dueDate = now.plusSeconds(86400); // 1 day from now
-
-        project = escrowService.createProject(
-            client.id(),
-            freelancer.id(),
-            "Test Project",
-            Duration.ofDays(3),  // 3-day review window
-            List.of(
-                new EscrowService.MilestoneSpec("Milestone 1", 100_000, dueDate),
-                new EscrowService.MilestoneSpec("Milestone 2", 200_000, dueDate.plusSeconds(86400))
-            )
-        );
-
-        // Fund and submit all milestones
-        escrowService.fundProject(project.id(), "fund:project:" + project.id());
+        String run = UUID.randomUUID().toString().substring(0, 8);
+        client = userRepository.save("client-" + run, "CLIENT");
+        freelancer = userRepository.save("freelancer-" + run, "FREELANCER");
+        long wallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().id();
+        long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
+            "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -1_000_000), new Leg(wallet, 1_000_000)))));
     }
 
     @Test
-    @DisplayName("auto-release does not trigger before review window expires")
-    @Transactional
-    void testAutoReleaseBeforeWindowExpires() {
-        // Submit milestone 1
-        Milestone m1 = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m1.id(), "submit:milestone:" + m1.id());
+    @DisplayName("window − 1s: still SUBMITTED; +2s: RELEASED with exact balances")
+    void releasesExactlyAtTheEndOfTheReviewWindow() {
+        Project project = fundedProject(100_000);
+        Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
+        escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        long feesBefore = balance("PLATFORM_FEES");
 
-        // Verify it's SUBMITTED
-        Milestone submitted = milestoneRepository.findById(m1.id()).orElseThrow();
-        assertThat(submitted.state()).isEqualTo(MilestoneState.SUBMITTED);
+        clock.advance(WINDOW.minusSeconds(1));
+        autoReleaseJob.runOnce();
+        assertThat(state(m)).isEqualTo(MilestoneState.SUBMITTED);
 
-        // Run auto-release job (should NOT release because review window hasn't expired)
+        clock.advance(Duration.ofSeconds(2));
+        autoReleaseJob.runOnce();
+        assertThat(state(m)).isEqualTo(MilestoneState.RELEASED);
+
+        long fee = Money.calculateFee(100_000, FEE_BPS);
+        assertThat(escrow(project)).isZero();
+        assertThat(balance("FREELANCER_WALLET:" + freelancer.id())).isEqualTo(100_000 - fee);
+        assertThat(balance("PLATFORM_FEES") - feesBefore).isEqualTo(fee);
+    }
+
+    @Test
+    @DisplayName("every milestone past its window is released in one run")
+    void releasesAllEligibleMilestones() {
+        Project project = fundedProject(100_000, 200_000);
+        for (Milestone m : milestoneRepository.findByProjectId(project.id())) {
+            escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        }
+        clock.advance(WINDOW.plusSeconds(1));
         autoReleaseJob.runOnce();
 
-        // Verify milestone is still SUBMITTED
-        Milestone stillSubmitted = milestoneRepository.findById(m1.id()).orElseThrow();
-        assertThat(stillSubmitted.state()).isEqualTo(MilestoneState.SUBMITTED);
-
-        // ESCROW balance unchanged
-        var escrowAccount = accountRepository.findById(project.escrowAccountId()).orElseThrow();
-        assertThat(escrowAccount.balance()).isEqualTo(300_000); // 100k + 200k
+        assertThat(milestoneRepository.findByProjectId(project.id()))
+            .allSatisfy(m -> assertThat(m.state()).isEqualTo(MilestoneState.RELEASED));
+        assertThat(escrow(project)).isZero();
+        assertThat(balance("FREELANCER_WALLET:" + freelancer.id()))
+            .isEqualTo(300_000 - Money.calculateFee(100_000, FEE_BPS) - Money.calculateFee(200_000, FEE_BPS));
     }
 
     @Test
-    @DisplayName("auto-release triggers after review window expires")
-    @Transactional
-    void testAutoReleaseAfterWindowExpires() {
-        // Submit milestone 1
-        Milestone m1 = milestoneRepository.findByProjectId(project.id()).get(0);
-        long m1Amount = m1.amountPaise();
-        escrowService.submitMilestone(m1.id(), "submit:milestone:" + m1.id());
+    @DisplayName("race: 20 approves and 5 auto-release runs on one milestone → exactly one release")
+    void approveVersusAutoReleaseReleasesOnce() throws Exception {
+        Project project = fundedProject(100_000);
+        Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
+        escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        clock.advance(WINDOW.plusSeconds(1));   // eligible for both paths
 
-        // Verify it's SUBMITTED with APPROVED state not reached
-        Milestone submitted = milestoneRepository.findById(m1.id()).orElseThrow();
-        assertThat(submitted.state()).isEqualTo(MilestoneState.SUBMITTED);
-        assertThat(submitted.submittedAt()).isNotNull();
-
-        // Advance clock past review window (3 days = 259,200 seconds)
-        Instant nowPlusWindow = submitted.submittedAt().plusSeconds(259_200 + 1);
-        
-        // We need to mock the clock advancing. In a real test with a controllable clock,
-        // we'd do this. For now, we'll assume the clock is set up correctly and manually
-        // check the SQL logic instead.
-
-        // Run auto-release job (should NOW release because window has expired)
-        autoReleaseJob.runOnce();
-
-        // Verify milestone is now RELEASED
-        Milestone released = milestoneRepository.findById(m1.id()).orElseThrow();
-        assertThat(released.state()).isEqualTo(MilestoneState.RELEASED);
-
-        // Verify ESCROW balance reduced by m1Amount
-        var escrowAccount = accountRepository.findById(project.escrowAccountId()).orElseThrow();
-        assertThat(escrowAccount.balance()).isEqualTo(300_000 - m1Amount);
-
-        // Verify freelancer received payment (minus fee)
-        long fee = com.svatsa.escrow.common.Money.calculateFee(m1Amount, 500);
-        long freelancerPayout = m1Amount - fee;
-        var freelancerWallet = accountRepository.findByCode("FREELANCER_WALLET:" + freelancer.id())
-            .orElseThrow();
-        assertThat(freelancerWallet.balance()).isEqualTo(freelancerPayout);
-
-        // Verify platform fees collected
-        var platformFees = accountRepository.findByCode("PLATFORM_FEES").orElseThrow();
-        assertThat(platformFees.balance()).isEqualTo(fee);
-    }
-
-    @Test
-    @DisplayName("auto-release releases multiple milestones if multiple windows have expired")
-    @Transactional
-    void testAutoReleaseMultipleMilestones() {
-        // Submit both milestones
-        List<Milestone> milestones = milestoneRepository.findByProjectId(project.id());
-        Milestone m1 = milestones.get(0);
-        Milestone m2 = milestones.get(1);
-
-        escrowService.submitMilestone(m1.id(), "submit:milestone:" + m1.id());
-        escrowService.submitMilestone(m2.id(), "submit:milestone:" + m2.id());
-
-        // Verify both SUBMITTED
-        assertThat(milestoneRepository.findById(m1.id()).orElseThrow().state())
-            .isEqualTo(MilestoneState.SUBMITTED);
-        assertThat(milestoneRepository.findById(m2.id()).orElseThrow().state())
-            .isEqualTo(MilestoneState.SUBMITTED);
-
-        // Run auto-release multiple times to release both
-        // (In practice, the job should process them in order with SKIP LOCKED)
-        for (int i = 0; i < 2; i++) {
-            autoReleaseJob.runOnce();
+        List<Throwable> unexpected = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService pool = Executors.newFixedThreadPool(25)) {
+            for (int i = 0; i < 20; i++) {
+                final int n = i;
+                pool.submit(() -> {
+                    await(start);
+                    try {
+                        escrowService.approveMilestone(m.id(), "approve-" + m.id() + "-" + n);
+                    } catch (InvalidStateTransitionException expected) {
+                        // lost the race: correct
+                    } catch (Throwable t) {
+                        unexpected.add(t);
+                    }
+                });
+            }
+            for (int i = 0; i < 5; i++) {
+                pool.submit(() -> {
+                    await(start);
+                    try {
+                        autoReleaseJob.runOnce();
+                    } catch (Throwable t) {
+                        unexpected.add(t);
+                    }
+                });
+            }
+            start.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(60, TimeUnit.SECONDS)).isTrue();
         }
 
-        // Both should be RELEASED
-        assertThat(milestoneRepository.findById(m1.id()).orElseThrow().state())
-            .isEqualTo(MilestoneState.RELEASED);
-        assertThat(milestoneRepository.findById(m2.id()).orElseThrow().state())
-            .isEqualTo(MilestoneState.RELEASED);
-
-        // ESCROW should be empty
-        var escrowAccount = accountRepository.findById(project.escrowAccountId()).orElseThrow();
-        assertThat(escrowAccount.balance()).isEqualTo(0);
+        assertThat(unexpected).isEmpty();
+        assertThat(state(m)).isEqualTo(MilestoneState.RELEASED);
+        assertThat(escrow(project)).as("escrow left the project exactly once").isZero();
+        assertThat(balance("FREELANCER_WALLET:" + freelancer.id()))
+            .as("freelancer paid exactly once").isEqualTo(100_000 - Money.calculateFee(100_000, FEE_BPS));
     }
 
     @Test
-    @DisplayName("auto-release with concurrent job invocations (SKIP LOCKED prevents duplicates)")
-    void testAutoReleaseConcurrencySKIPLocked() {
-        // This test verifies that SKIP LOCKED prevents duplicate releases when
-        // multiple AutoReleaseJob instances run concurrently.
-        // 
-        // In a real concurrent scenario, we'd spawn 5 threads each calling runOnce()
-        // on 20 ready milestones, and verify only 20 journal entries (one per milestone).
-        //
-        // For now, we document the expected behavior:
-        // - Each job invocation runs: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
-        // - Claim a milestone atomically, release it in same transaction
-        // - If another job claimed it, skip and move to next
-        // - Result: exactly N releases for N ready milestones, no duplicates
+    @DisplayName("two runOnce() in parallel over 200 eligible milestones → each released exactly once")
+    void parallelJobsReleaseEachMilestoneOnce() throws Exception {
+        long[] amounts = new long[200];
+        java.util.Arrays.fill(amounts, 1_000);
+        Project project = fundedProject(amounts);
+        for (Milestone m : milestoneRepository.findByProjectId(project.id())) {
+            escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        }
+        clock.advance(WINDOW.plusSeconds(1));
 
-        // Setup: create project with multiple milestones
-        Instant now = clock.instant();
-        Instant dueDate = now.plusSeconds(86400);
-
-        Project multiProject = escrowService.createProject(
-            client.id(),
-            freelancer.id(),
-            "Multi-Milestone Project",
-            Duration.ofDays(3),
-            List.of(
-                new EscrowService.MilestoneSpec("M1", 50_000, dueDate),
-                new EscrowService.MilestoneSpec("M2", 50_000, dueDate),
-                new EscrowService.MilestoneSpec("M3", 50_000, dueDate),
-                new EscrowService.MilestoneSpec("M4", 50_000, dueDate),
-                new EscrowService.MilestoneSpec("M5", 50_000, dueDate)
-            )
-        );
-
-        // Fund and submit all
-        escrowService.fundProject(multiProject.id(), "fund:project:" + multiProject.id());
-        for (Milestone m : milestoneRepository.findByProjectId(multiProject.id())) {
-            escrowService.submitMilestone(m.id(), "submit:milestone:" + m.id());
+        List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            for (int i = 0; i < 2; i++) {
+                pool.submit(() -> {
+                    await(start);
+                    try {
+                        autoReleaseJob.runOnce();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                    }
+                });
+            }
+            start.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(120, TimeUnit.SECONDS)).isTrue();
         }
 
-        // If we could advance clock and spawn 5 threads each calling autoReleaseJob.runOnce(),
-        // we'd verify only 5 releases occur (one per milestone).
-
-        // For now, verify single-threaded release works:
-        autoReleaseJob.runOnce();
-
-        // Should have released exactly one milestone (in order)
-        List<Milestone> allMilestones = milestoneRepository.findByProjectId(multiProject.id());
-        long releasedCount = allMilestones.stream()
-            .filter(m -> m.state() == MilestoneState.RELEASED)
-            .count();
-        assertThat(releasedCount).isGreaterThanOrEqualTo(0); // At least some released if window expired
+        assertThat(errors).isEmpty();
+        assertThat(milestoneRepository.findByProjectId(project.id()))
+            .hasSize(200)
+            .allSatisfy(m -> assertThat(m.state()).isEqualTo(MilestoneState.RELEASED));
+        assertThat(escrow(project)).isZero();
+        assertThat(balance("FREELANCER_WALLET:" + freelancer.id()))
+            .isEqualTo(200 * (1_000 - Money.calculateFee(1_000, FEE_BPS)));
     }
 
-    @Test
-    @DisplayName("auto-release respects SUBMITTED milestone order (submitted_at ASC)")
-    @Transactional
-    void testAutoReleaseOrder() {
-        // Submit milestone 1
-        Milestone m1 = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m1.id(), "submit:milestone:" + m1.id());
+    // --- helpers -----------------------------------------------------------------------------
 
-        // Then submit milestone 2 (later)
-        Milestone m2 = milestoneRepository.findByProjectId(project.id()).get(1);
-        escrowService.submitMilestone(m2.id(), "submit:milestone:" + m2.id());
-
-        // When auto-release runs and both windows have expired,
-        // it should process M1 first (older submitted_at)
-
-        // Run job
-        autoReleaseJob.runOnce();
-
-        // Verify M1 was released (or attempted)
-        Milestone m1After = milestoneRepository.findById(m1.id()).orElseThrow();
-        // State might be RELEASED if window expired, or SUBMITTED if not
-
-        // Invariants checked in @AfterEach
+    private Project fundedProject(long... amounts) {
+        Instant due = clock.instant().plus(Duration.ofDays(30));
+        List<EscrowService.MilestoneSpec> specs = new ArrayList<>();
+        for (int i = 0; i < amounts.length; i++) {
+            specs.add(new EscrowService.MilestoneSpec("m" + (i + 1), amounts[i], due));
+        }
+        Project project = escrowService.createProject(client.id(), freelancer.id(), "auto-release", WINDOW, specs);
+        escrowService.fundProject(project.id(), "fund-" + project.id());
+        return project;
     }
 
-    @Test
-    @DisplayName("ledger invariants hold after auto-release")
-    @Transactional
-    void testInvariantsHoldAfterAutoRelease() {
-        // Submit a milestone
-        Milestone m1 = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m1.id(), "submit:milestone:" + m1.id());
+    private MilestoneState state(Milestone m) {
+        return milestoneRepository.findById(m.id()).orElseThrow().state();
+    }
 
-        // Run auto-release (may or may not release depending on clock)
-        autoReleaseJob.runOnce();
+    private long escrow(Project p) {
+        return accountRepository.findById(p.escrowAccountId()).orElseThrow().balance();
+    }
 
-        // Invariants checked in @AfterEach
-        assertThat(invariantChecker.check()).isEmpty();
+    private long balance(String code) {
+        return accountRepository.findByCode(code).orElseThrow().balance();
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

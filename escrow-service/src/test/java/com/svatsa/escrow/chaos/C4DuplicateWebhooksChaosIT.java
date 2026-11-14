@@ -62,7 +62,6 @@ class C4DuplicateWebhooksChaosIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        clearLedger();
 
         // Create a client wallet
         var clientWallet = accountRepository.create(

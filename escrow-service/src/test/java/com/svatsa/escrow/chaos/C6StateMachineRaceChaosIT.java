@@ -70,7 +70,6 @@ class C6StateMachineRaceChaosIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        clearLedger();
     }
 
     @Test

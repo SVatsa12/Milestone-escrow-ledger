@@ -162,15 +162,29 @@ Regression: `AuditLogConsumerIT` waits for a ledger entry's event to land in `au
 - **Regression:** `OutboxRelayThroughputIT` (5,000 events within 10s). It was verified to fail
   against the old relay, which still had 3,624 pending after 10s.
 
+## Bugs found by re-enabling the integration tests
+Until now 72 of 85 tests were skipped. `AbstractIntegrationTest` booted an H2 "test" profile with
+Flyway off, so the schema never existed; from P3 on, each prompt marked its new integration tests
+`@Disabled("Requires Postgres")` instead of fixing the base class. Docker and Testcontainers were
+never the problem. The base class now starts real Postgres, Kafka, Redis and Toxiproxy (H2 and
+the H2 profiles are deleted), every test runs, and the `@AfterEach` invariant check was proven to
+fire by a test that only corrupts one balance. Many old tests were themselves wrong (they wrote
+`accounts.balance` directly, never moved the clock, asserted nothing, or counted global rows);
+those were rewritten in the test commit. The code bugs they then exposed are below.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)
   instead of `fund:project:{id}`, `release:milestone:{id}`, and so on. Money is still safe today,
   because the conditional state update rejects the second transition and rolls back its posting.
   But the ledger-level guard of invariant 8 is missing for these flows.
-- **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
-  P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto
-  `AbstractToxiproxyIT` (or a plain Postgres base) will likely surface more bugs like #5 and #6.
+- **Not built yet, so not testable yet** (no test can pass until the feature exists):
+  - P5's role checks: a freelancer approving or a client submitting should be 403, but the escrow
+    service takes no actor at all.
+  - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
+    recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
+  - P10's mock payout provider (the module is still an empty app; tests use `FakePayoutProvider`).
+- **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
 - **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
   Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
   real one.

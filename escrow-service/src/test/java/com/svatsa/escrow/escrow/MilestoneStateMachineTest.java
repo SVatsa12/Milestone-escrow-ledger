@@ -181,4 +181,31 @@ class MilestoneStateMachineTest {
         assertThat(MilestoneStateMachine.isValidTransition(state, state))
             .isFalse();
     }
+
+    /**
+     * P5: every one of the 81 (from, to) pairs is allowed if and only if it is in the AGENTS.md
+     * state diagram. The expected set is written out here independently of the implementation's
+     * table, so the test can't just agree with itself.
+     */
+    @Test
+    @DisplayName("all 81 pairs: allowed exactly when the AGENTS.md diagram allows them")
+    void everyPairMatchesTheAgentsDiagram() {
+        java.util.Set<String> diagram = java.util.Set.of(
+            "DRAFT->FUNDED", "DRAFT->CANCELLED",
+            "FUNDED->SUBMITTED", "FUNDED->CANCELLED",
+            "SUBMITTED->APPROVED", "SUBMITTED->DISPUTED",
+            "APPROVED->RELEASED",
+            "DISPUTED->RESOLVED",
+            "CANCELLED->REFUNDED");
+        int checked = 0;
+        for (MilestoneState from : MilestoneState.values()) {
+            for (MilestoneState to : MilestoneState.values()) {
+                assertThat(MilestoneStateMachine.isValidTransition(from, to))
+                    .as("%s -> %s", from, to)
+                    .isEqualTo(diagram.contains(from + "->" + to));
+                checked++;
+            }
+        }
+        assertThat(checked).isEqualTo(81);
+    }
 }

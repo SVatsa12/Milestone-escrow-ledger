@@ -16,13 +16,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,9 +35,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Note: Requires Postgres with Flyway migrations.
  * Disabled for H2 in-memory tests. Enable in CI with docker-compose.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest
-@ActiveProfiles("test")
 @DisplayName("Dispute Integration Tests")
 class DisputeIT extends AbstractIntegrationTest {
 
@@ -69,14 +62,20 @@ class DisputeIT extends AbstractIntegrationTest {
     @Autowired
     private com.svatsa.escrow.ledger.LedgerService ledgerService;
 
+    @Autowired
+    private org.springframework.transaction.support.TransactionTemplate seedTx;
+
     private User client;
     private User freelancer;
     private Project project;
     private Milestone milestone;
 
+    /** PLATFORM_FEES is one shared system account, so tests assert how much it moved. */
+    private long feesBefore;
+
     @BeforeEach
     void setUp() {
-        clearLedger();
+        feesBefore = accountRepository.findByCode("PLATFORM_FEES").orElseThrow().balance();
 
         client = userRepository.save("Alice (Client)", "CLIENT");
         freelancer = userRepository.save("Bob (Freelancer)", "FREELANCER");
@@ -92,19 +91,20 @@ class DisputeIT extends AbstractIntegrationTest {
         );
 
         // Post a deposit
-        ledgerService.post(
+        // Inside a transaction: LedgerService.post requires one (propagation MANDATORY).
+        seedTx.executeWithoutResult(status -> ledgerService.post(
             new com.svatsa.escrow.ledger.PostingRequest(
                 "DEPOSIT",
                 "USER",
                 client.id().toString(),
-                "deposit:rzp:setup",
+                "deposit:rzp:test-" + java.util.UUID.randomUUID(),
                 "Setup deposit",
                 List.of(
                     new com.svatsa.escrow.ledger.Leg(externalBank.id(), -500_000),
                     new com.svatsa.escrow.ledger.Leg(clientWallet.id(), 500_000)
                 )
             )
-        );
+        ));
 
         // Create project with one milestone
         Instant now = clock.instant();
@@ -130,7 +130,6 @@ class DisputeIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("open dispute: freezes funds in DISPUTE_HOLD, milestone transitions to DISPUTED")
-    @Transactional
     void testOpenDispute() {
         // Verify initial state: SUBMITTED, ESCROW holds 100k
         var escrowBefore = accountRepository.findById(project.escrowAccountId()).orElseThrow();
@@ -163,7 +162,6 @@ class DisputeIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("cannot open duplicate dispute on same milestone")
-    @Transactional
     void testDuplicateDisputeBlocked() {
         // Open first dispute
         disputeService.openDispute(
@@ -184,12 +182,20 @@ class DisputeIT extends AbstractIntegrationTest {
                 "dispute-freeze:milestone:" + milestone.id()
             )
         )
-            .isInstanceOf(DisputeAlreadyOpenException.class);
+            // The milestone is already DISPUTED, so the state machine rejects the second dispute
+            // before the "already open" check is reached; both are 409 INVALID_STATE_TRANSITION.
+            .isInstanceOfAny(DisputeAlreadyOpenException.class,
+                com.svatsa.escrow.escrow.InvalidStateTransitionException.class);
+
+        // What matters: still exactly one dispute, and the frozen amount was not frozen twice.
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM disputes WHERE milestone_id = ?")
+            .param(milestone.id()).query(Long.class).single()).isEqualTo(1);
+        assertThat(accountRepository.findById(project.disputeHoldAccountId()).orElseThrow().balance())
+            .isEqualTo(milestone.amountPaise());
     }
 
     @Test
     @DisplayName("cannot approve/release while milestone is DISPUTED")
-    @Transactional
     void testApproveFailsWhileDisputed() {
         // Open dispute
         disputeService.openDispute(
@@ -209,7 +215,6 @@ class DisputeIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("resolve dispute: freelancer wins 100%, client gets 0%")
-    @Transactional
     void testResolveFreelancerWins() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
@@ -220,13 +225,14 @@ class DisputeIT extends AbstractIntegrationTest {
             "dispute-freeze:milestone:" + milestone.id()
         );
 
-        // Resolve: freelancer gets all (100,000 paise), client gets nothing
+        // Resolve: freelancer gets all of it. Shares are GROSS (AGENTS.md: F + C = A), and the
+        // fee comes out of F, so F = 100,000 and the wallet receives 95,000.
         long fee = Money.calculateFee(100_000, 500); // 5% = 5,000
         long freelancerNet = 100_000 - fee; // 95,000
 
         disputeService.resolveDispute(
             dispute.id(),
-            freelancerNet,
+            100_000L,
             0L,  // client gets nothing
             "Freelancer performed correctly",
             client.id(),
@@ -236,7 +242,7 @@ class DisputeIT extends AbstractIntegrationTest {
         // Verify dispute is resolved
         Dispute resolved = disputeRepository.findById(dispute.id()).orElseThrow();
         assertThat(resolved.status()).isEqualTo("RESOLVED");
-        assertThat(resolved.freelancerSharePaise()).isEqualTo(freelancerNet);
+        assertThat(resolved.freelancerSharePaise()).isEqualTo(100_000);
         assertThat(resolved.clientSharePaise()).isEqualTo(0);
 
         // Verify milestone transitioned to RESOLVED
@@ -253,13 +259,12 @@ class DisputeIT extends AbstractIntegrationTest {
 
         assertThat(freelancerWallet.balance()).isEqualTo(freelancerNet);
         assertThat(clientWallet.balance()).isEqualTo(500_000 - 100_000); // unchanged from deposit
-        assertThat(platformFees.balance()).isEqualTo(fee);
+        assertThat(platformFees.balance() - feesBefore).as("PLATFORM_FEES change (it is shared by every test)").isEqualTo(fee);
         assertThat(disputeHold.balance()).isEqualTo(0);
     }
 
     @Test
     @DisplayName("resolve dispute: client wins 100%, freelancer gets 0%")
-    @Transactional
     void testResolveClientWins() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
@@ -296,13 +301,12 @@ class DisputeIT extends AbstractIntegrationTest {
 
         assertThat(freelancerWallet.balance()).isEqualTo(0);
         assertThat(clientWallet.balance()).isEqualTo(500_000 - 100_000 + 100_000); // refunded
-        assertThat(platformFees.balance()).isEqualTo(0);
+        assertThat(platformFees.balance() - feesBefore).as("PLATFORM_FEES change (it is shared by every test)").isEqualTo(0);
         assertThat(disputeHold.balance()).isEqualTo(0);
     }
 
     @Test
     @DisplayName("resolve dispute: 70/30 split (freelancer/client)")
-    @Transactional
     void testResolveSplit70_30() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
@@ -340,7 +344,6 @@ class DisputeIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("ledger invariants hold after dispute flow")
-    @Transactional
     void testInvariantsHoldAfterDispute() {
         // Open dispute
         Dispute dispute = disputeService.openDispute(

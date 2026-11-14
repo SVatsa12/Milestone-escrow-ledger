@@ -60,7 +60,6 @@ class C1ProviderLatencyChaosIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        clearLedger();
         // In a real chaos setup, Toxiproxy would be configured here
     }
 

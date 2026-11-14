@@ -1,349 +1,146 @@
 package com.svatsa.escrow.ledger;
 
-import net.jqwik.api.*;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
+import com.svatsa.escrow.recon.InvariantChecker;
+import com.svatsa.escrow.test.AbstractIntegrationTest;
+import net.jqwik.api.Arbitraries;
+import net.jqwik.api.Arbitrary;
+import net.jqwik.api.Combinators;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.Provide;
+import net.jqwik.api.lifecycle.AfterContainer;
+import net.jqwik.spring.JqwikSpringSupport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Property-based tests for the ledger using jqwik.
- * 
- * Proves that ledger invariants I1-I5 hold under random operation sequences
- * including transfers (many failing due to insufficient funds), replays, and deposits.
- * 
- * Design:
- * - jqwik generates 100+ random operation sequences, each with 100 operations
- * - Total operation count: 10,000+ (tries * @Provide size)
- * - Each operation is transfer, replay, or deposit
- * - Concurrent operations run in parallel on separate transactions
- * - In-memory model tracks expected balances independently
- * - After all ops, assert invariants I1-I5 hold and ledger matches in-memory model
- * 
- * Note: Requires Postgres with Flyway migrations. H2 in-memory DB doesn't support
- * ON CONFLICT and other required SQL patterns. Tests are disabled for H2.
+ * P4: random sequences of ledger operations keep I1–I5 and match a pure in-memory model.
+ *
+ * Lifecycle note: jqwik runs on its own engine, so JUnit's @BeforeEach/@AfterEach (including the
+ * base class's invariant check) do not run here, and Spring injection comes from
+ * {@link JqwikSpringSupport}. The containers are the base class's static singletons. Each try
+ * creates its own 20 wallets, so tries never share state, and checks the invariants itself.
+ *
+ * 100 tries × 100 operations = 10,000 operations per run.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest(properties = "spring.profiles.active=test")
-class LedgerPropertyIT {
+@JqwikSpringSupport
+class LedgerPropertyIT extends AbstractIntegrationTest {
 
-    @Autowired
-    private JdbcClient jdbcClient;
+    private static final Logger log = LoggerFactory.getLogger(LedgerPropertyIT.class);
+    private static final int WALLETS = 20;
+    private static final AtomicLong SUCCEEDED = new AtomicLong();
+    private static final AtomicLong REJECTED = new AtomicLong();
+    private static final AtomicLong REPLAYED = new AtomicLong();
 
-    @Autowired
-    private AccountRepository accountRepository;
+    @Autowired private LedgerService ledgerService;
+    @Autowired private AccountRepository accountRepository;
+    @Autowired private TransactionTemplate tx;
+    @Autowired private InvariantChecker checker;
 
-    @Autowired
-    private LedgerService ledgerService;
+    /** One generated step. Indices are taken modulo the pool, so any int is valid. */
+    record Op(String kind, int a, int b, long amount, int replayPick) {}
 
-    // Test data: stable across multiple operations within a test
-    private List<Account> wallets;
-    private Account externalBank;
-    private final Map<Long, Long> inMemoryBalances = new HashMap<>();
-    private int successCount = 0;
-    private int rejectCount = 0;
-    private int replayCount = 0;
-
-    /**
-     * Initialize test fixtures before each property run.
-     * Creates 20 wallets + EXTERNAL_BANK, seeds with initial deposits.
-     */
-    @BeforeEach
-    @Transactional
-    void setUp() {
-        clearLedger();
-        
-        wallets = new ArrayList<>();
-        for (int i = 0; i < 20; i++) {
-            Account wallet = accountRepository.create(
-                "PROP:WALLET_" + i,
-                AccountType.CLIENT_WALLET,
-                (long) i,
-                false
-            );
-            wallets.add(wallet);
-            inMemoryBalances.put(wallet.id(), 0L);
-        }
-
-        // Get EXTERNAL_BANK:RAZORPAY (created by seed migration)
-        externalBank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY")
-            .orElseThrow(() -> new IllegalStateException("EXTERNAL_BANK:RAZORPAY not found"));
-        inMemoryBalances.put(externalBank.id(), 0L);
-
-        // Seed each wallet with a random deposit (1000-5000 paise)
-        Random rand = new Random(42); // Deterministic seed for reproducibility
-        for (Account wallet : wallets) {
-            long seedAmount = 1000 + rand.nextInt(4000);
-            seedDeposit(wallet, seedAmount);
-        }
-
-        successCount = 0;
-        rejectCount = 0;
-        replayCount = 0;
-    }
-
-    /**
-     * Main property: a sequence of random operations maintains I1-I5 invariants
-     * and ledger balances match an in-memory model.
-     * 
-     * Currently DISABLED: Requires proper Postgres setup + needs refactoring for jqwik lifecycle.
-     */
-    @Disabled
     @Property(tries = 100)
-    @Transactional
-    void ledgerInvariantsHoldUnderRandomOperations(
-        @ForAll("operationSequence") List<Operation> operations
-    ) {
-        for (Operation op : operations) {
-            executeOperation(op);
+    void randomOperationsKeepTheLedgerConsistentAndMatchTheModel(@ForAll("operations") List<Op> ops) {
+        String run = UUID.randomUUID().toString().substring(0, 8);
+        long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
+
+        // Pool of 20 wallets, each seeded with a deposit.
+        List<Long> wallets = new ArrayList<>();
+        Map<Long, Long> model = new HashMap<>();
+        Set<String> appliedKeys = new HashSet<>();
+        for (int i = 0; i < WALLETS; i++) {
+            long id = accountRepository.create("PROP:" + run + ":" + i, AccountType.CLIENT_WALLET, null, false).id();
+            wallets.add(id);
+            model.put(id, 0L);
+            long seed = 1_000 + (long) (i * 7_919 % 9_000);
+            apply(new PostingRequest("DEPOSIT", "TEST", run, "prop-seed:" + run + ":" + i, "seed",
+                List.of(new Leg(bank, -seed), new Leg(id, seed))), model, appliedKeys);
         }
 
-        // Verify invariants
-        assertInvariants();
-
-        // Verify in-memory model matches ledger
-        for (Account wallet : wallets) {
-            Long expectedBalance = inMemoryBalances.get(wallet.id());
-            Account actual = accountRepository.findById(wallet.id()).orElseThrow();
-            assertThat(actual.balance())
-                .as("Wallet %s balance should match in-memory model", wallet.code())
-                .isEqualTo(expectedBalance);
-        }
-    }
-
-    /**
-     * Generate random operation sequences: transfer, replay, or deposit.
-     */
-    @Provide
-    Arbitrary<List<Operation>> operationSequence() {
-        Arbitrary<Operation> operation = Arbitraries.oneOf(
-            Arbitraries.randomValue(random -> {
-                // Transfer: random from/to, amount 1..2x typical balance
-                int from = random.nextInt(wallets.size());
-                int to = random.nextInt(wallets.size());
-                if (from == to) to = (to + 1) % wallets.size();
-                long amount = 1 + random.nextInt(10000);
-                return new Operation.Transfer(
-                    wallets.get(from).id(),
-                    wallets.get(to).id(),
-                    amount,
-                    UUID.randomUUID().toString()
-                );
-            }),
-            Arbitraries.randomValue(random -> {
-                // Replay: re-use an old idempotency key (if any)
-                if (inMemoryBalances.isEmpty()) {
-                    return new Operation.Transfer(
-                        wallets.get(0).id(),
-                        wallets.get(1).id(),
-                        100,
-                        UUID.randomUUID().toString()
-                    );
-                }
-                // For simplicity, just generate a new transfer
-                int from = random.nextInt(wallets.size());
-                int to = (from + 1) % wallets.size();
-                return new Operation.Transfer(
-                    wallets.get(from).id(),
-                    wallets.get(to).id(),
-                    50 + random.nextInt(500),
-                    "replay-" + random.nextLong()
-                );
-            }),
-            Arbitraries.randomValue(random -> {
-                // Deposit from EXTERNAL_BANK
-                int to = random.nextInt(wallets.size());
-                long amount = 100 + random.nextInt(1000);
-                return new Operation.Deposit(
-                    wallets.get(to).id(),
-                    amount,
-                    "deposit-" + random.nextLong()
-                );
-            })
-        );
-        return operation.list().ofSize(100);
-    }
-
-    /**
-     * Execute a single operation and track success/failure.
-     */
-    private void executeOperation(Operation op) {
-        if (op instanceof Operation.Transfer transfer) {
-            executeTransfer(transfer);
-        } else if (op instanceof Operation.Deposit deposit) {
-            executeDeposit(deposit);
-        }
-    }
-
-    private void executeTransfer(Operation.Transfer transfer) {
-        try {
-            ledgerService.post(new PostingRequest(
-                "TRANSFER",
-                "TRANSFER",
-                transfer.idempotencyKey(),
-                "transfer:" + transfer.idempotencyKey(),
-                "Property test transfer",
-                List.of(
-                    new Leg(transfer.fromAccountId(), -transfer.amountPaise()),
-                    new Leg(transfer.toAccountId(), transfer.amountPaise())
-                )
-            ));
-            
-            // Update in-memory model only if successful
-            long fromBalance = inMemoryBalances.get(transfer.fromAccountId());
-            long toBalance = inMemoryBalances.get(transfer.toAccountId());
-            
-            if (fromBalance >= transfer.amountPaise()) {
-                inMemoryBalances.put(transfer.fromAccountId(), fromBalance - transfer.amountPaise());
-                inMemoryBalances.put(transfer.toAccountId(), toBalance + transfer.amountPaise());
-                successCount++;
+        // Requests already sent (to replay) and keys the ledger has actually applied.
+        List<PostingRequest> sent = new ArrayList<>();
+        int n = 0;
+        for (Op op : ops) {
+            PostingRequest req;
+            if (op.kind().equals("replay") && !sent.isEmpty()) {
+                req = sent.get(Math.floorMod(op.replayPick(), sent.size()));
+            } else if (op.kind().equals("deposit")) {
+                long to = wallets.get(Math.floorMod(op.a(), WALLETS));
+                req = new PostingRequest("DEPOSIT", "TEST", run, "prop:" + run + ":" + n, "deposit",
+                    List.of(new Leg(bank, -op.amount()), new Leg(to, op.amount())));
             } else {
-                rejectCount++;
+                int fromIdx = Math.floorMod(op.a(), WALLETS);
+                int toIdx = Math.floorMod(fromIdx + 1 + Math.floorMod(op.b(), WALLETS - 1), WALLETS);
+                req = new PostingRequest("TRANSFER", "TEST", run, "prop:" + run + ":" + n, "transfer",
+                    List.of(new Leg(wallets.get(fromIdx), -op.amount()), new Leg(wallets.get(toIdx), op.amount())));
             }
+            sent.add(req);
+            n++;
+            apply(req, model, appliedKeys);
+        }
+
+        // The ledger and the model agree, wallet by wallet...
+        for (long id : wallets) {
+            assertThat(accountRepository.findById(id).orElseThrow().balance())
+                .as("wallet %d", id).isEqualTo(model.get(id));
+        }
+        // ...and the invariants hold for the whole database.
+        assertThat(checker.check()).isEmpty();
+    }
+
+    /**
+     * Post through LedgerService and mirror the same rule in the model: a key the ledger already
+     * applied is a no-op replay; otherwise the posting applies if no wallet would go below zero,
+     * else it is rejected and leaves nothing behind (so the same key may succeed later).
+     */
+    private void apply(PostingRequest req, Map<Long, Long> model, Set<String> appliedKeys) {
+        boolean modelReplay = appliedKeys.contains(req.idempotencyKey());
+        boolean modelAccepts = req.legs().stream()
+            .allMatch(l -> !model.containsKey(l.accountId()) || model.get(l.accountId()) + l.amountPaise() >= 0);
+        try {
+            PostingResult result = tx.execute(s -> ledgerService.post(req));
+            if (result.replayed()) {
+                assertThat(modelReplay).as("ledger replayed %s, model had not applied it", req.idempotencyKey()).isTrue();
+                REPLAYED.incrementAndGet();
+                return;
+            }
+            assertThat(modelReplay).as("ledger re-applied %s", req.idempotencyKey()).isFalse();
+            assertThat(modelAccepts).as("ledger accepted %s, model rejects it", req.idempotencyKey()).isTrue();
+            req.legs().forEach(l -> model.computeIfPresent(l.accountId(), (k, v) -> v + l.amountPaise()));
+            appliedKeys.add(req.idempotencyKey());
+            SUCCEEDED.incrementAndGet();
         } catch (InsufficientFundsException e) {
-            // Expected: in-memory model stays unchanged
-            rejectCount++;
+            assertThat(modelReplay || modelAccepts).as("ledger rejected %s, model accepts it", req.idempotencyKey()).isFalse();
+            REJECTED.incrementAndGet();
         }
     }
 
-    private void executeDeposit(Operation.Deposit deposit) {
-        try {
-            ledgerService.post(new PostingRequest(
-                "DEPOSIT",
-                "DEPOSIT",
-                deposit.idempotencyKey(),
-                "deposit:" + deposit.idempotencyKey(),
-                "Property test deposit",
-                List.of(
-                    new Leg(externalBank.id(), -deposit.amountPaise()),
-                    new Leg(deposit.toAccountId(), deposit.amountPaise())
-                )
-            ));
-
-            // Update in-memory model
-            long toBalance = inMemoryBalances.get(deposit.toAccountId());
-            inMemoryBalances.put(deposit.toAccountId(), toBalance + deposit.amountPaise());
-            long bankBalance = inMemoryBalances.get(externalBank.id());
-            inMemoryBalances.put(externalBank.id(), bankBalance - deposit.amountPaise());
-            successCount++;
-        } catch (Exception e) {
-            rejectCount++;
-        }
+    @Provide
+    Arbitrary<List<Op>> operations() {
+        Arbitrary<String> kind = Arbitraries.of("transfer", "transfer", "transfer", "replay", "deposit");
+        Arbitrary<Integer> idx = Arbitraries.integers().between(0, 1_000);
+        // Up to ~2x a typical balance, so many transfers are rejected.
+        Arbitrary<Long> amount = Arbitraries.longs().between(1, 12_000);
+        return Combinators.combine(kind, idx, idx, amount, idx).as(Op::new).list().ofSize(100);
     }
 
-    /**
-     * Verify all invariants hold (will be called by AbstractIntegrationTest.verifyInvariants too).
-     */
-    private void assertInvariants() {
-        // I1: Every entry sums to 0 and has >= 2 postings
-        List<Long> unbalancedEntries = jdbcClient.sql("""
-            SELECT entry_id FROM (
-                SELECT entry_id, SUM(amount) as total, COUNT(*) as cnt
-                FROM postings
-                GROUP BY entry_id
-            ) t
-            WHERE total <> 0 OR cnt < 2
-            """)
-            .query(Long.class)
-            .list();
-        assertThat(unbalancedEntries)
-            .as("I1: No unbalanced or undersized entries")
-            .isEmpty();
-
-        // I2: Sum of all postings = 0
-        Long totalSum = jdbcClient.sql("SELECT COALESCE(SUM(amount), 0) FROM postings")
-            .query(Long.class)
-            .single();
-        assertThat(totalSum)
-            .as("I2: Total postings must sum to 0")
-            .isEqualTo(0L);
-
-        // I3: For each account, balance = SUM(postings)
-        List<String> balanceMismatches = jdbcClient.sql("""
-            SELECT a.id || ':' || a.code
-            FROM accounts a
-            LEFT JOIN (
-                SELECT account_id, SUM(amount) as total
-                FROM postings
-                GROUP BY account_id
-            ) p ON a.id = p.account_id
-            WHERE a.balance <> COALESCE(p.total, 0)
-            """)
-            .query(String.class)
-            .list();
-        assertThat(balanceMismatches)
-            .as("I3: No account balance mismatches")
-            .isEmpty();
-
-        // I4: No non-negative account with negative balance
-        List<String> negatives = jdbcClient.sql("""
-            SELECT id || ':' || code FROM accounts
-            WHERE allow_negative = false AND balance < 0
-            """)
-            .query(String.class)
-            .list();
-        assertThat(negatives)
-            .as("I4: No non-negative account with negative balance")
-            .isEmpty();
-
-        // I5: No duplicate idempotency keys
-        Integer duplicateCount = jdbcClient.sql("""
-            SELECT COUNT(*) - COUNT(DISTINCT idempotency_key) FROM journal_entries
-            """)
-            .query(Integer.class)
-            .single();
-        assertThat(duplicateCount)
-            .as("I5: No duplicate idempotency keys")
-            .isEqualTo(0);
-    }
-
-    private void seedDeposit(Account wallet, long amount) {
-        try {
-            ledgerService.post(new PostingRequest(
-                "SEED_DEPOSIT",
-                "SEED_DEPOSIT",
-                "seed-" + wallet.id(),
-                "seed-" + wallet.id(),
-                "Initial seed",
-                List.of(
-                    new Leg(externalBank.id(), -amount),
-                    new Leg(wallet.id(), amount)
-                )
-            ));
-            inMemoryBalances.put(wallet.id(), amount);
-            long bankBalance = inMemoryBalances.getOrDefault(externalBank.id(), 0L);
-            inMemoryBalances.put(externalBank.id(), bankBalance - amount);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to seed wallet", e);
-        }
-    }
-
-    @Transactional
-    private void clearLedger() {
-        try {
-            jdbcClient.sql("DELETE FROM postings").update();
-            jdbcClient.sql("DELETE FROM journal_entries").update();
-            jdbcClient.sql("DELETE FROM idempotency_keys").update();
-            jdbcClient.sql("UPDATE accounts SET balance = 0").update();
-        } catch (Exception e) {
-            // Ignore if tables don't exist
-        }
-    }
-
-    /**
-     * Operation variants for the property test.
-     */
-    sealed interface Operation {
-        record Transfer(long fromAccountId, long toAccountId, long amountPaise, String idempotencyKey)
-            implements Operation {}
-        
-        record Deposit(long toAccountId, long amountPaise, String idempotencyKey)
-            implements Operation {}
+    @AfterContainer
+    static void report() {
+        log.info("ledger.property ops: succeeded={} rejected={} replayed={} total={}",
+            SUCCEEDED.get(), REJECTED.get(), REPLAYED.get(), SUCCEEDED.get() + REJECTED.get() + REPLAYED.get());
     }
 }

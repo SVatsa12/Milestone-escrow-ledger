@@ -145,10 +145,11 @@
             <version>${jqwik.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- H2 for in-memory tests -->
+        <!-- Lets jqwik properties use Spring injection (LedgerPropertyIT). -->
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
+            <groupId>net.jqwik</groupId>
+            <artifactId>jqwik-spring</artifactId>
+            <version>0.12.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

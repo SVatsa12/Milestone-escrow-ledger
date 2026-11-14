@@ -61,7 +61,6 @@ class C5KafkaOutageChaosIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        clearLedger();
 
         // Create accounts
         var clientWallet = accountRepository.create(

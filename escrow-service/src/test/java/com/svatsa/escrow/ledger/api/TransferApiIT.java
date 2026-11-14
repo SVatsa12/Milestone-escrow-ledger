@@ -3,522 +3,213 @@ package com.svatsa.escrow.ledger.api;
 import com.svatsa.escrow.ledger.Account;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
-import com.svatsa.escrow.recon.InvariantChecker;
+import com.svatsa.escrow.ledger.LedgerService;
+import com.svatsa.escrow.ledger.Leg;
+import com.svatsa.escrow.ledger.PostingRequest;
+import com.svatsa.escrow.test.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for the transfer API and idempotency.
- * 
- * These tests verify:
- * - Transfer moves money and updates both account balances
- * - Same Idempotency-Key+body sent twice returns byte-identical response
- * - Replayed response includes Idempotent-Replayed header
- * - Only 1 journal entry exists after replay
- * - Same key with different body returns 422 IDEMPOTENCY_KEY_REUSED
- * - Insufficient funds returns 422 INSUFFICIENT_FUNDS, no entry written
- * - Insufficient funds allows key reuse on retry
- * - Transfer to self returns 400 VALIDATION_FAILED
- * 
- * Note: These tests are disabled by default because they require Postgres
- * with the full ledger schema (Flyway migrations). Enable them in CI with
- * docker-compose. For local development, use the LedgerSchemaIT tests or
- * unit tests for the API layer.
+ * P3: transfer API and HTTP idempotency, against real Postgres.
+ * Each test funds fresh wallets through the ledger and counts only its own journal entries,
+ * so it holds on the shared database and leaves the invariants intact.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI or with docker-compose")
-@SpringBootTest(properties = "spring.profiles.active=test")
 @AutoConfigureMockMvc
-class TransferApiIT {
+class TransferApiIT extends AbstractIntegrationTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Autowired private MockMvc mockMvc;
+    @Autowired private AccountRepository accountRepository;
+    @Autowired private LedgerService ledgerService;
+    @Autowired private TransactionTemplate tx;
 
-    @Autowired
-    private AccountRepository accountRepository;
-
-    @Autowired
-    private JdbcClient jdbcClient;
-
-    @Autowired
-    private InvariantChecker invariantChecker;
-
-    private Account accountA;
-    private Account accountB;
+    private String run;
+    private Account a;
+    private Account b;
 
     @BeforeEach
-    @Transactional
     void setUp() {
-        // Clear previous data
-        clearLedger();
-        
-        // Create two test accounts
-        accountA = accountRepository.create(
-            "TEST:ACCOUNT_A",
-            AccountType.CLIENT_WALLET,
-            1L,
-            false
-        );
-        
-        accountB = accountRepository.create(
-            "TEST:ACCOUNT_B",
-            AccountType.FREELANCER_WALLET,
-            2L,
-            false
-        );
-        
-        // Fund account A with 10,000 paise
-        jdbcClient.sql("UPDATE accounts SET balance = 10000 WHERE id = ?")
-            .param(accountA.id())
-            .update();
-    }
-
-    /**
-     * Delete all ledger data (for test isolation).
-     * Must be in a transaction.
-     */
-    @Transactional
-    private void clearLedger() {
-        try {
-            // H2 doesn't support CASCADE, so delete in order
-            try {
-                jdbcClient.sql("DELETE FROM postings").update();
-            } catch (Exception e) {
-                // Table may not exist yet
-            }
-            try {
-                jdbcClient.sql("DELETE FROM journal_entries").update();
-            } catch (Exception e) {
-                // Table may not exist yet
-            }
-            try {
-                jdbcClient.sql("DELETE FROM idempotency_keys").update();
-            } catch (Exception e) {
-                // Table may not exist yet
-            }
-            try {
-                jdbcClient.sql("UPDATE accounts SET balance = 0").update();
-            } catch (Exception e) {
-                // Table may not exist yet
-            }
-        } catch (Exception e) {
-            // Ignore cleanup errors in test mode
-        }
+        run = UUID.randomUUID().toString().substring(0, 8);
+        a = wallet("A", 10_000);
+        b = wallet("B", 0);
     }
 
     @Test
-    @Transactional
     void transferMovesMoneyBetweenAccounts() throws Exception {
-        // Arrange: transfer 1000 paise from A to B
-        TransferRequest request = new TransferRequest(
-            accountA.id(),
-            accountB.id(),
-            1000,
-            "Test transfer"
-        );
-
-        // Act: POST /api/v1/transfers
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", "transfer-key-1")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 1000,
-                        "memo": "Test transfer"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
+        transfer(key("move"), a, b, 1_000)
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.entryId").isNumber())
-            .andExpect(jsonPath("$.replayed").value(false));
+            .andExpect(jsonPath("$.entryId").isNumber());
 
-        // Assert: both balances updated correctly
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(9000));
-
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountB.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(1000));
-
-        // Assert: exactly 1 journal entry exists
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(1);
+        assertThat(balance(a)).isEqualTo(9_000);
+        assertThat(balance(b)).isEqualTo(1_000);
+        assertThat(entries(key("move"))).isEqualTo(1);
     }
 
     @Test
-    @Transactional
-    void idempotentKeyReplayReturnsSameResponse() throws Exception {
-        // Arrange: first transfer
-        String idempotencyKey = "transfer-idempotent-1";
-        String requestBody = """
-            {
-                "fromAccountId": %d,
-                "toAccountId": %d,
-                "amountPaise": 500,
-                "memo": "Idempotent transfer"
-            }
-            """.formatted(accountA.id(), accountB.id());
+    void sameKeyAndBodyReplaysTheFirstResponseByteForByte() throws Exception {
+        String key = key("replay");
+        MvcResult first = transfer(key, a, b, 500).andExpect(status().isCreated())
+            .andExpect(header().doesNotExist("Idempotent-Replayed")).andReturn();
+        MvcResult second = transfer(key, a, b, 500).andExpect(status().isCreated())
+            .andExpect(header().string("Idempotent-Replayed", "true")).andReturn();
 
-        // Act: POST first time
-        String firstResponse = mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestBody))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.replayed").value(false))
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-
-        // Act: POST second time with same key and body
-        String secondResponse = mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestBody))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.replayed").value(true))
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-
-        // Assert: responses are identical
-        assertThat(firstResponse).isEqualTo(secondResponse);
-
-        // Assert: only 1 journal entry exists
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(1);
-
-        // Assert: balances only changed once
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(9500));
-
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountB.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(500));
+        assertThat(second.getResponse().getContentAsString())
+            .isEqualTo(first.getResponse().getContentAsString());
+        assertThat(entries(key)).isEqualTo(1);
+        assertThat(balance(a)).isEqualTo(9_500);
+        assertThat(balance(b)).isEqualTo(500);
     }
 
     @Test
-    @Transactional
-    void idempotencyKeyReuseWithDifferentBodyReturns422() throws Exception {
-        // Arrange: first request
-        String idempotencyKey = "transfer-reuse-1";
-        
-        // Act: POST first request
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 100,
-                        "memo": "First request"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
-            .andExpect(status().isCreated());
+    void sameKeyWithDifferentBodyIs422IdempotencyKeyReused() throws Exception {
+        String key = key("reuse");
+        transfer(key, a, b, 100).andExpect(status().isCreated());
 
-        // Act: POST with same key but different amount
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 200,
-                        "memo": "Different request"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
+        transfer(key, a, b, 999)
             .andExpect(status().isUnprocessableEntity())
-            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
 
-        // Assert: only 1 journal entry (first one won)
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(1);
+        assertThat(entries(key)).isEqualTo(1);
+        assertThat(balance(b)).isEqualTo(100);
     }
 
     @Test
-    @Transactional
-    void insufficientFundsReturns422() throws Exception {
-        // Arrange: try to transfer 20,000 paise when account only has 10,000
-        String idempotencyKey = "transfer-insufficient-1";
-
-        // Act: POST transfer with insufficient funds
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 20000,
-                        "memo": "Insufficient funds transfer"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
+    void insufficientFundsIs422WritesNothingAndTheKeyCanBeReused() throws Exception {
+        String key = key("insufficient");
+        transfer(key, a, b, 50_000)
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"));
+        assertThat(entries(key)).isZero();
+        assertThat(balance(a)).isEqualTo(10_000);
 
-        // Assert: no journal entry written
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(0);
-
-        // Assert: balances unchanged
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(10000));
-
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountB.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(0));
+        // The rejected request stored nothing, so the same key works for a valid request later.
+        transfer(key, a, b, 5_000).andExpect(status().isCreated());
+        assertThat(entries(key)).isEqualTo(1);
+        assertThat(balance(a)).isEqualTo(5_000);
+        assertThat(balance(b)).isEqualTo(5_000);
     }
 
     @Test
-    @Transactional
-    void insufficientFundsAllowsKeyReuse() throws Exception {
-        // Arrange: first attempt fails due to insufficient funds
-        String idempotencyKey = "transfer-reuse-insufficient-1";
-
-        // Act: POST with insufficient funds
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 20000,
-                        "memo": "First attempt - insufficient"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
-            .andExpect(status().isUnprocessableEntity());
-
-        // Act: retry with same key but smaller amount (should succeed)
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", idempotencyKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 5000,
-                        "memo": "Retry with smaller amount"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.replayed").value(false));
-
-        // Assert: transfer succeeded and balances are correct
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(5000));
-
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountB.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(5000));
-    }
-
-    @Test
-    @Transactional
-    void transferToSelfReturns400() throws Exception {
-        // Act: POST transfer from account to itself
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", "transfer-self-1")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 100,
-                        "memo": "Transfer to self"
-                    }
-                    """.formatted(accountA.id(), accountA.id())))
+    void transferToSelfIs400() throws Exception {
+        transfer(key("self"), a, a, 100)
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
-        // Assert: no journal entry written
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(0);
-
-        // Assert: balance unchanged
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(10000));
+        assertThat(entries(key("self"))).isZero();
     }
 
     @Test
-    @Transactional
-    void missingIdempotencyKeyReturns400() throws Exception {
-        // Act: POST transfer without Idempotency-Key header
-        mockMvc.perform(post("/api/v1/transfers")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 100,
-                        "memo": "Missing key"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
+    void missingIdempotencyKeyIs400() throws Exception {
+        mockMvc.perform(post("/api/v1/transfers").contentType(MediaType.APPLICATION_JSON)
+                .content(body(a, b, 100)))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
-        // Assert: no journal entry written
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(0);
+        assertThat(balance(a)).isEqualTo(10_000);
     }
 
     @Test
-    @Transactional
-    void negativeAmountReturns400() throws Exception {
-        // Act: POST transfer with negative amount
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", "transfer-negative-1")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": -100,
-                        "memo": "Negative amount"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
+    void nonPositiveAmountIs400() throws Exception {
+        transfer(key("negative"), a, b, -100)
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
-        // Assert: no journal entry written
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(0);
+        assertThat(entries(key("negative"))).isZero();
     }
 
     @Test
-    @Transactional
-    void simulateDepositMovesMoneyFromRazorpay() throws Exception {
-        // Arrange: create a client account
-        Account clientAccount = accountRepository.create(
-            "TEST:CLIENT_DEPOSIT",
-            AccountType.CLIENT_WALLET,
-            3L,
-            false
-        );
+    void simulatedDepositMovesMoneyFromRazorpay() throws Exception {
+        long razorpayBefore = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().balance();
 
-        // Act: POST simulate deposit
         mockMvc.perform(post("/api/v1/admin/deposits/simulate")
-                .header("Idempotency-Key", "simulate-deposit-1")
+                .header("Idempotency-Key", key("deposit"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "clientAccountId": %d,
-                        "amountPaise": 5000
-                    }
-                    """.formatted(clientAccount.id())))
+                .content("{\"clientAccountId\":" + b.id() + ",\"amountPaise\":5000}"))
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.entryId").isNumber())
-            .andExpect(jsonPath("$.replayed").value(false));
+            .andExpect(jsonPath("$.entryId").isNumber());
 
-        // Assert: client account balance increased
-        mockMvc.perform(get("/api/v1/accounts/{id}", clientAccount.id()))
+        assertThat(balance(b)).isEqualTo(5_000);
+        assertThat(accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().balance())
+            .isEqualTo(razorpayBefore - 5_000);
+    }
+
+    @Test
+    void getAccountReturnsIdCodeAndBalance() throws Exception {
+        mockMvc.perform(get("/api/v1/accounts/{id}", a.id()))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.balance").value(5000));
+            .andExpect(jsonPath("$.id").value(a.id()))
+            .andExpect(jsonPath("$.code").value(a.code()))
+            .andExpect(jsonPath("$.balance").value(10_000));
+    }
 
-        // Assert: EXTERNAL_BANK:RAZORPAY balance decreased
-        Long razorpayAccount = jdbcClient.sql("""
-                SELECT id FROM accounts WHERE code = 'EXTERNAL_BANK:RAZORPAY'
-            """)
-            .query(Long.class)
-            .optional()
-            .orElse(null);
+    @Test
+    void unknownAccountIs404NotFound() throws Exception {
+        mockMvc.perform(get("/api/v1/accounts/{id}", 999_999_999L))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
 
-        if (razorpayAccount != null) {
-            mockMvc.perform(get("/api/v1/accounts/{id}", razorpayAccount))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balance").value(-5000));
+    @Test
+    void postingsAreListedNewestFirst() throws Exception {
+        transfer(key("postings"), a, b, 1_000).andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/accounts/{id}/postings", a.id()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].amount").value(-1_000))   // the transfer
+            .andExpect(jsonPath("$[1].amount").value(10_000));  // the seed deposit
+        mockMvc.perform(get("/api/v1/accounts/{id}/postings", b.id()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].amount").value(1_000));
+    }
+
+    // --- helpers -----------------------------------------------------------------------------
+
+    private org.springframework.test.web.servlet.ResultActions transfer(String key, Account from, Account to, long amount)
+            throws Exception {
+        return mockMvc.perform(post("/api/v1/transfers")
+            .header("Idempotency-Key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body(from, to, amount)));
+    }
+
+    private static String body(Account from, Account to, long amount) {
+        return "{\"fromAccountId\":" + from.id() + ",\"toAccountId\":" + to.id()
+            + ",\"amountPaise\":" + amount + ",\"memo\":\"test\"}";
+    }
+
+    private String key(String name) {
+        return "tapi-" + name + "-" + run;
+    }
+
+    private long entries(String key) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = ?")
+            .param("transfer:" + key).query(Long.class).single();
+    }
+
+    private Account wallet(String name, long amount) {
+        Account acc = accountRepository.create("TAPI:" + name + ":" + run, AccountType.CLIENT_WALLET, null, false);
+        if (amount > 0) {
+            long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
+            tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "TEST_SEED", acc.code(),
+                "tapi-seed:" + acc.code(), "seed", List.of(new Leg(bank, -amount), new Leg(acc.id(), amount)))));
         }
-
-        // Assert: exactly 1 journal entry exists
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount).isEqualTo(1);
+        return acc;
     }
 
-    @Test
-    @Transactional
-    void getAccountReturnsBalanceAndCode() throws Exception {
-        // Act: GET account
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountA.id()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.id").value(accountA.id()))
-            .andExpect(jsonPath("$.code").value(accountA.code()))
-            .andExpect(jsonPath("$.balance").value(10000));
-    }
-
-    @Test
-    @Transactional
-    void getAccountNotFoundReturns404() throws Exception {
-        // Act: GET non-existent account
-        mockMvc.perform(get("/api/v1/accounts/99999"))
-            .andExpect(status().isNotFound());
-    }
-
-    @Test
-    @Transactional
-    void getPostingsReturnsPaginatedResults() throws Exception {
-        // Arrange: do a transfer to create postings
-        mockMvc.perform(post("/api/v1/transfers")
-                .header("Idempotency-Key", "transfer-for-postings-1")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "fromAccountId": %d,
-                        "toAccountId": %d,
-                        "amountPaise": 1000,
-                        "memo": "Create postings"
-                    }
-                    """.formatted(accountA.id(), accountB.id())))
-            .andExpect(status().isCreated());
-
-        // Act: GET postings for account A
-        mockMvc.perform(get("/api/v1/accounts/{id}/postings", accountA.id())
-                .param("limit", "50"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0].amount").value(-1000))
-            .andExpect(jsonPath("$[0].id").isNumber())
-            .andExpect(jsonPath("$[0].created_at").isNotEmpty());
-
-        // Act: GET postings for account B
-        mockMvc.perform(get("/api/v1/accounts/{id}/postings", accountB.id())
-                .param("limit", "50"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0].amount").value(1000));
+    private long balance(Account acc) {
+        return accountRepository.findById(acc.id()).orElseThrow().balance();
     }
 }

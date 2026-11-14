@@ -37,7 +37,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class FakePayoutProvider {
 
-    public enum Mode { SUCCESS, FAIL, RANDOM }
+    public enum Mode { SUCCESS, FAIL, RANDOM, TIMEOUT_THEN_SUCCEED, TIMEOUT_THEN_FAIL, TIMEOUT_NOT_RECEIVED, ERROR_500 }
+
+    /** Longer than the client's 2s read timeout, so the caller sees a timeout. */
+    private static final long TIMEOUT_DELAY_MS = 3_000;
 
     public record ProviderRecord(String key, String status, long amountPaise, String beneficiary) {}
 
@@ -89,7 +92,17 @@ public final class FakePayoutProvider {
         return Map.copyOf(records);
     }
 
-    /** How many POST /v1/payouts requests actually reached the provider for this key. */
+    /** Test hook: put a record in place as if the provider had processed the key. */
+    public void putRecord(String key, String status, long amountPaise) {
+        records.put(key, new ProviderRecord(key, status, amountPaise, "test"));
+    }
+
+        /** Test hook: make the provider report a different amount for a payout (reconciliation drift). */
+    public void setAmount(String key, long amountPaise) {
+        records.computeIfPresent(key, (k, r) -> new ProviderRecord(k, r.status(), amountPaise, r.beneficiary()));
+    }
+
+        /** How many POST /v1/payouts requests actually reached the provider for this key. */
     public int postCount(String key) {
         AtomicInteger count = postsByKey.get(key);
         return count == null ? 0 : count.get();
@@ -138,7 +151,9 @@ public final class FakePayoutProvider {
             }
         }
 
-        sleep(responseDelayMs);
+        boolean timeoutMode = mode == Mode.TIMEOUT_THEN_SUCCEED || mode == Mode.TIMEOUT_THEN_FAIL
+            || mode == Mode.TIMEOUT_NOT_RECEIVED;
+        sleep(timeoutMode ? TIMEOUT_DELAY_MS : responseDelayMs);
 
         switch (outcome) {
             case "SUCCESS" -> send(exchange, 200, recordBody(key));
@@ -182,8 +197,10 @@ public final class FakePayoutProvider {
     /** RANDOM: 40% SUCCESS, 20% FAILED, 20% PROCESSING, 20% 500 with nothing recorded. */
     private String pickOutcome() {
         return switch (mode) {
-            case SUCCESS -> "SUCCESS";
-            case FAIL -> "FAILED";
+            case SUCCESS, TIMEOUT_THEN_SUCCEED -> "SUCCESS";
+            case FAIL, TIMEOUT_THEN_FAIL -> "FAILED";
+            // Nothing is recorded: the request "never arrived" / the provider fell over.
+            case TIMEOUT_NOT_RECEIVED, ERROR_500 -> "ERROR_500";
             case RANDOM -> {
                 int roll = random.nextInt(100);
                 if (roll < 40) yield "SUCCESS";

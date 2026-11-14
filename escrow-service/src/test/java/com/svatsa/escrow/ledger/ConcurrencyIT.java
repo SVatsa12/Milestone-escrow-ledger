@@ -1,372 +1,245 @@
 package com.svatsa.escrow.ledger;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.svatsa.escrow.test.AbstractIntegrationTest;
+import com.svatsa.escrow.test.ApiClient;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.dao.DataAccessException;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Concurrency tests for the ledger.
- * 
- * These tests prove that the ledger is safe under concurrent operations:
- * - Hot account: many small transfers out of one account (exactly N succeed when budget is N × amount)
- * - Deadlock: opposite-direction transfers between two accounts (no deadlocks, invariants hold)
- * - Same key race: multiple threads posting the same idempotency key (exactly 1 entry created)
- * 
- * All tests use virtual threads for efficient parallel execution.
- * 
- * Note: These tests require Postgres with Flyway migrations.
- * They are @Disabled for H2 in-memory tests. Enable in CI with docker-compose.
+ * P4 concurrency tests. Every test funds its own fresh accounts through the ledger (never by
+ * writing accounts.balance) and counts only its own journal entries, so it holds on a shared
+ * database and leaves the invariants intact.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest(properties = "spring.profiles.active=test")
 class ConcurrencyIT extends AbstractIntegrationTest {
 
-    @Autowired
-    private AccountRepository accountRepository;
+    @Autowired private AccountRepository accountRepository;
+    @Autowired private LedgerService ledgerService;
+    @Autowired private TransactionTemplate tx;
 
-    @Autowired
-    private LedgerService ledgerService;
-
-    @Autowired
-    private TransactionTemplate transactionTemplate;
-
-    private Account hotAccount;
-    private Account recipient;
-    private Account accountA;
-    private Account accountB;
+    private final ObjectMapper json = new ObjectMapper();
+    private String run;
+    private ApiClient api;
 
     @BeforeEach
     void setUp() {
-        clearLedger();
-        
-        hotAccount = accountRepository.create("CONCUR:HOT", AccountType.CLIENT_WALLET, 1L, false);
-        recipient = accountRepository.create("CONCUR:RECIPIENT", AccountType.FREELANCER_WALLET, 2L, false);
-        accountA = accountRepository.create("CONCUR:A", AccountType.CLIENT_WALLET, 3L, false);
-        accountB = accountRepository.create("CONCUR:B", AccountType.FREELANCER_WALLET, 4L, false);
+        run = UUID.randomUUID().toString().substring(0, 8);
+        api = new ApiClient(serverPort);
+    }
 
-        // Fund accounts
-        jdbcClient.sql("UPDATE accounts SET balance = 3700 WHERE id = ?")
-            .param(hotAccount.id())
-            .update();
-        
-        jdbcClient.sql("UPDATE accounts SET balance = 1000000 WHERE id = ?")
-            .param(accountA.id())
-            .update();
-        
-        jdbcClient.sql("UPDATE accounts SET balance = 1000000 WHERE id = ?")
-            .param(accountB.id())
-            .update();
+    /** 3a. A wallet with 3,700 paise; 100 parallel 100-paise transfers: exactly 37 succeed. */
+    @Test
+    void hotAccountConcurrency() throws Exception {
+        Account hot = funded("HOT", 3_700);
+        Account recipient = funded("RECIPIENT", 0);
+        AtomicInteger succeeded = new AtomicInteger();
+        AtomicInteger insufficient = new AtomicInteger();
+        List<Throwable> unexpected = Collections.synchronizedList(new ArrayList<>());
+
+        runConcurrently(100, i -> {
+            try {
+                tx.executeWithoutResult(s -> ledgerService.post(transfer("hot-" + run + "-" + i, hot, recipient, 100)));
+                succeeded.incrementAndGet();
+            } catch (InsufficientFundsException e) {
+                insufficient.incrementAndGet();
+            } catch (Throwable t) {
+                unexpected.add(t);
+            }
+        });
+
+        assertThat(unexpected).isEmpty();
+        assertThat(succeeded.get()).isEqualTo(37);
+        assertThat(insufficient.get()).isEqualTo(63);
+        assertThat(balance(hot)).isZero();
+        assertThat(balance(recipient)).isEqualTo(3_700);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key LIKE ?")
+            .param("hot-" + run + "-%").query(Long.class).single())
+            .as("one entry per successful transfer, none for rejected ones").isEqualTo(37);
+    }
+
+    /** 3b. 200 parallel transfers, half A→B and half B→A: zero failures of any kind. */
+    @Test
+    void noDeadlockWithOppositeTransfers() throws Exception {
+        Account a = funded("A", 1_000_000);
+        Account b = funded("B", 1_000_000);
+        List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
+
+        runConcurrently(200, i -> {
+            try {
+                Account from = i % 2 == 0 ? a : b;
+                Account to = i % 2 == 0 ? b : a;
+                tx.executeWithoutResult(s -> ledgerService.post(transfer("dl-" + run + "-" + i, from, to, 1_000)));
+            } catch (Throwable t) {
+                failures.add(t);   // a deadlock (SQLState 40P01) or anything else
+            }
+        });
+
+        assertThat(failures).as("no deadlock and no other failure").isEmpty();
+        assertThat(balance(a) + balance(b)).isEqualTo(2_000_000);
     }
 
     /**
-     * Hot account: 100 parallel transfers of 100 paise out of a 3700 paise account.
-     * Exactly 37 should succeed, 63 should fail with INSUFFICIENT_FUNDS.
-     * Final balance should be 0 (37 × 100).
+     * 3c. 50 clients send the same Idempotency-Key and body to the API at once: exactly one
+     * journal entry, every response 2xx with an identical body, 49 marked Idempotent-Replayed.
+     * (P4 specifies the API here: the HTTP idempotency layer is what serialises same-key requests.)
      */
     @Test
-    void hotAccountConcurrency() throws InterruptedException {
-        int threadCount = 100;
-        int amountPerTransfer = 100;
-        CountDownLatch startGate = new CountDownLatch(1);
-        CountDownLatch endGate = new CountDownLatch(threadCount);
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failureCount = new AtomicInteger(0);
+    void sameKeyRaceThroughTheApiCreatesOneEntry() throws Exception {
+        Account a = funded("RACE_A", 100_000);
+        Account b = funded("RACE_B", 0);
+        String key = "race-" + run;
+        String body = "{\"fromAccountId\":" + a.id() + ",\"toAccountId\":" + b.id() + ",\"amountPaise\":1000,\"memo\":\"race\"}";
 
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-        for (int i = 0; i < threadCount; i++) {
-            final int index = i;
-            executor.submit(() -> {
-                try {
-                    startGate.await(); // Wait for all threads to be ready
-                    
-                    transactionTemplate.executeWithoutResult(status -> {
-                        try {
-                            ledgerService.post(new PostingRequest(
-                                "TRANSFER",
-                                "TRANSFER",
-                                "hot-" + index,
-                                "hot-transfer-" + index,
-                                "Hot account transfer",
-                                List.of(
-                                    new Leg(hotAccount.id(), -amountPerTransfer),
-                                    new Leg(recipient.id(), amountPerTransfer)
-                                )
-                            ));
-                            successCount.incrementAndGet();
-                        } catch (InsufficientFundsException e) {
-                            failureCount.incrementAndGet();
-                        }
-                    });
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
-                }
-            });
+        List<CompletableFuture<HttpResponse<String>>> calls = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            calls.add(api.http().sendAsync(api.postRequest("/api/v1/transfers", key, ApiClient.admin(), body).build(),
+                HttpResponse.BodyHandlers.ofString()));
+        }
+        List<HttpResponse<String>> responses = new ArrayList<>();
+        for (var c : calls) {
+            responses.add(c.get(60, TimeUnit.SECONDS));
         }
 
-        // Start all threads at once
-        startGate.countDown();
-        
-        // Wait for all to finish
-        boolean finished = endGate.await(10, TimeUnit.SECONDS);
-        assertThat(finished).as("All threads should complete within timeout").isTrue();
-        executor.shutdown();
-
-        // Verify results
-        assertThat(successCount.get())
-            .as("Exactly 37 transfers should succeed (3700 / 100)")
-            .isEqualTo(37);
-        
-        assertThat(failureCount.get())
-            .as("Exactly 63 transfers should fail (insufficient funds)")
-            .isEqualTo(63);
-
-        // Verify final balances
-        Account hotFinal = accountRepository.findById(hotAccount.id()).orElseThrow();
-        assertThat(hotFinal.balance())
-            .as("Hot account balance should be 0 after 37 × 100 transfers")
-            .isEqualTo(0);
-
-        Account recipientFinal = accountRepository.findById(recipient.id()).orElseThrow();
-        assertThat(recipientFinal.balance())
-            .as("Recipient balance should be 3700")
-            .isEqualTo(3700);
-
-        // Verify no journal entries were created for failed transfers
-        Long entryCount = jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE type = 'TRANSFER'")
-            .query(Long.class)
-            .single();
-        assertThat(entryCount)
-            .as("Should have exactly 37 journal entries (one per success)")
-            .isEqualTo(37);
+        assertThat(responses).allSatisfy(r -> assertThat(r.statusCode()).as(r.body()).isEqualTo(201));
+        assertThat(responses.stream().map(r -> {
+            try {
+                return json.readTree(r.body());
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }).distinct()).as("identical bodies").hasSize(1);
+        assertThat(responses.stream().filter(r -> r.headers().firstValue("Idempotent-Replayed").isPresent()))
+            .hasSize(49);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = ?")
+            .param("transfer:" + key).query(Long.class).single()).isEqualTo(1);
+        assertThat(balance(b)).isEqualTo(1_000);
     }
 
     /**
-     * Deadlock test: 200 parallel transfers, half A→B and half B→A.
-     * Should complete without deadlock (no PSQLException with SQLState 40P01).
-     * Invariants should hold, A+B balance should remain 2,000,000.
+     * 4. Why LedgerService locks accounts in ascending id order: two transactions that lock the
+     * same pair of rows in opposite orders deadlock (Postgres aborts one with 40P01); the same
+     * two transactions in ascending order both complete. Raw SQL with a barrier, so the
+     * interleaving is forced rather than left to chance; no test-only code in production.
      */
     @Test
-    void noDeadlockWithOppositeTransfers() throws InterruptedException {
-        int threadCount = 200;
-        CountDownLatch startGate = new CountDownLatch(1);
-        CountDownLatch endGate = new CountDownLatch(threadCount);
-        AtomicInteger errorCount = new AtomicInteger(0);
+    void lockOrderingIsWhatPreventsTheDeadlock() throws Exception {
+        long a = funded("LOCK_A", 0).id();
+        long b = funded("LOCK_B", 0).id();
 
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        List<Throwable> naive = lockPairConcurrently(new long[]{a, b}, new long[]{b, a});
+        assertThat(naive).as("opposite lock order must deadlock").hasSize(1);
+        assertThat(naive.get(0)).hasMessageContaining("deadlock");
 
-        for (int i = 0; i < threadCount; i++) {
-            final int index = i;
-            executor.submit(() -> {
-                try {
-                    startGate.await();
-                    
-                    transactionTemplate.executeWithoutResult(status -> {
-                        long from, to;
-                        if (index % 2 == 0) {
-                            // A → B
-                            from = accountA.id();
-                            to = accountB.id();
-                        } else {
-                            // B → A
-                            from = accountB.id();
-                            to = accountA.id();
-                        }
+        List<Throwable> ordered = lockPairConcurrently(new long[]{Math.min(a, b), Math.max(a, b)},
+            new long[]{Math.min(a, b), Math.max(a, b)});
+        assertThat(ordered).as("ascending lock order must not deadlock").isEmpty();
+    }
 
-                        try {
-                            ledgerService.post(new PostingRequest(
-                                "TRANSFER",
-                                "TRANSFER",
-                                "deadlock-" + index,
-                                "deadlock-transfer-" + index,
-                                "Deadlock test transfer",
-                                List.of(
-                                    new Leg(from, -1000),
-                                    new Leg(to, 1000)
-                                )
-                            ));
-                        } catch (Exception e) {
-                            // Log any unexpected errors (especially PSQLException with SQLState 40P01 = deadlock)
-                            if (e.getMessage() != null && e.getMessage().contains("40P01")) {
-                                errorCount.incrementAndGet();
-                            }
-                        }
-                    });
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
-                }
-            });
+    // --- helpers -----------------------------------------------------------------------------
+
+    /** Both transactions lock their first row, wait for each other, then lock their second row. */
+    private List<Throwable> lockPairConcurrently(long[] first, long[] second) throws Exception {
+        CyclicBarrier bothHoldFirstLock = new CyclicBarrier(2);
+        List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
+        long[][] orders = {first, second};
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            List<java.util.concurrent.Future<?>> fs = new ArrayList<>();
+            for (long[] order : orders) {
+                fs.add(pool.submit(() -> {
+                    try {
+                        tx.executeWithoutResult(s -> {
+                            lockRow(order[0]);
+                            await(bothHoldFirstLock);
+                            lockRow(order[1]);
+                        });
+                    } catch (DataAccessException e) {
+                        errors.add(e);
+                    }
+                }));
+            }
+            for (var f : fs) {
+                f.get(30, TimeUnit.SECONDS);
+            }
         }
+        return errors;
+    }
 
-        startGate.countDown();
-        boolean finished = endGate.await(30, TimeUnit.SECONDS);
-        assertThat(finished).as("All threads should complete without deadlock").isTrue();
-        executor.shutdown();
-
-        // Verify no deadlocks occurred
-        assertThat(errorCount.get())
-            .as("No deadlock errors should occur")
-            .isEqualTo(0);
-
-        // Verify final balances: A + B should still be 2,000,000
-        Account aFinal = accountRepository.findById(accountA.id()).orElseThrow();
-        Account bFinal = accountRepository.findById(accountB.id()).orElseThrow();
-        
-        assertThat(aFinal.balance() + bFinal.balance())
-            .as("Total balance of A + B should be conserved")
-            .isEqualTo(2_000_000);
-
-        // Verify all entries are balanced
-        List<Long> unbalancedEntries = jdbcClient.sql("""
-            SELECT entry_id FROM (
-                SELECT entry_id, SUM(amount) as total, COUNT(*) as cnt
-                FROM postings
-                GROUP BY entry_id
-            ) t
-            WHERE total <> 0 OR cnt < 2
-            """)
-            .query(Long.class)
-            .list();
-        assertThat(unbalancedEntries)
-            .as("No unbalanced entries should exist")
-            .isEmpty();
+    private void lockRow(long id) {
+        jdbcClient.sql("SELECT id FROM accounts WHERE id = ? FOR UPDATE").param(id).query(Long.class).single();
     }
 
     /**
-     * Same-key race: 50 threads post the same Idempotency-Key and request body simultaneously.
-     * Exactly 1 journal entry should be created.
-     * All 50 responses should be 2xx with identical bodies.
+     * Wait until both transactions hold their first lock. In the ascending-order case the second
+     * transaction blocks on the first row and never arrives, so the barrier times out and the
+     * first transaction simply carries on (and the second follows once the lock is released).
      */
-    @Test
-    void sameKeyRaceCreatesOnlyOneEntry() throws InterruptedException {
-        int threadCount = 50;
-        String sharedKey = "race-key-1";
-        CountDownLatch startGate = new CountDownLatch(1);
-        CountDownLatch endGate = new CountDownLatch(threadCount);
-        List<PostingResult> results = Collections.synchronizedList(new ArrayList<>());
-        AtomicInteger errorCount = new AtomicInteger(0);
-
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-        for (int i = 0; i < threadCount; i++) {
-            executor.submit(() -> {
-                try {
-                    startGate.await();
-                    
-                    transactionTemplate.executeWithoutResult(status -> {
-                        try {
-                            PostingResult result = ledgerService.post(new PostingRequest(
-                                "TRANSFER",
-                                "TRANSFER",
-                                sharedKey,
-                                "race-" + sharedKey,
-                                "Race test transfer",
-                                List.of(
-                                    new Leg(accountA.id(), -1000),
-                                    new Leg(accountB.id(), 1000)
-                                )
-                            ));
-                            results.add(result);
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                        }
-                    });
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
-                }
-            });
+    private static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await(3, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.BrokenBarrierException e) {
+            // expected when the other transaction is queued behind our lock
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-
-        startGate.countDown();
-        boolean finished = endGate.await(10, TimeUnit.SECONDS);
-        assertThat(finished).as("All threads should complete").isTrue();
-        executor.shutdown();
-
-        // Verify all threads got a response
-        assertThat(results.size() + errorCount.get())
-            .as("All 50 threads should complete successfully")
-            .isEqualTo(threadCount);
-
-        // Verify all results have the same entry ID
-        Set<Long> uniqueEntryIds = new HashSet<>();
-        for (PostingResult result : results) {
-            uniqueEntryIds.add(result.entryId());
-        }
-        assertThat(uniqueEntryIds)
-            .as("All 50 responses should reference the same journal entry")
-            .hasSize(1);
-
-        // Verify exactly one is marked as "not replayed"
-        long notReplayedCount = results.stream()
-            .filter(r -> !r.replayed())
-            .count();
-        assertThat(notReplayedCount)
-            .as("Exactly 1 response should have replayed=false")
-            .isEqualTo(1);
-
-        // Verify 49 are marked as "replayed"
-        long replayedCount = results.stream()
-            .filter(PostingResult::replayed)
-            .count();
-        assertThat(replayedCount)
-            .as("Exactly 49 responses should have replayed=true")
-            .isEqualTo(49);
-
-        // Verify only 1 journal entry exists for this key
-        Long entryCount = jdbcClient.sql(
-            "SELECT COUNT(*) FROM journal_entries WHERE idempotency_key = ?")
-            .param("race-" + sharedKey)
-            .query(Long.class)
-            .single();
-        assertThat(entryCount)
-            .as("Exactly 1 journal entry should exist for the shared key")
-            .isEqualTo(1);
     }
 
-    /**
-     * Commented-out naive lock path to demonstrate the importance of lock ordering.
-     * 
-     * If you uncomment the "NAIVE_LOCKING" code path in LedgerService (via a test-only flag),
-     * this test will deadlock under contention. The fix is the ascending-ID-order lock pattern.
-     * 
-     * We keep this as a documentation comment rather than actual code because adding
-     * test-only branches to production code is ugly. But the point is clear: without
-     * proper lock ordering, the opposite-transfer test would occasionally deadlock.
-     */
-    @Test
-    void lockOrderingPreventsDeadlock() throws InterruptedException {
-        // This test is covered by noDeadlockWithOppositeTransfers() above.
-        // The point: accounts are locked in ascending ID order in LedgerService.post(),
-        // so A→B and B→A can never deadlock. If we didn't sort, we'd see:
-        //
-        // Thread 1 (A→B):    locks A
-        // Thread 2 (B→A):    locks B
-        // Thread 1:          waits for B (blocked)
-        // Thread 2:          waits for A (blocked)
-        // → DEADLOCK
-        //
-        // With ascending order:
-        // Thread 1 (A→B):    locks A, then B (min first, always)
-        // Thread 2 (B→A):    locks A, then B (min first, always)
-        // → Both lock A first, no cycle, no deadlock
-        
-        // noDeadlockWithOppositeTransfers() proves this.
+    private void runConcurrently(int n, java.util.function.IntConsumer task) throws InterruptedException {
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(n);
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < n; i++) {
+                final int idx = i;
+                pool.submit(() -> {
+                    try {
+                        start.await();
+                        task.accept(idx);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            start.countDown();
+            assertThat(done.await(60, TimeUnit.SECONDS)).as("all tasks finished").isTrue();
+        }
+    }
+
+    /** A fresh wallet, funded through the ledger from EXTERNAL_BANK:RAZORPAY. */
+    private Account funded(String name, long amount) {
+        Account acc = accountRepository.create("CONCUR:" + name + ":" + run, AccountType.CLIENT_WALLET, null, false);
+        if (amount > 0) {
+            long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
+            tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "TEST_SEED", acc.code(),
+                "concur-seed:" + acc.code(), "seed", List.of(new Leg(bank, -amount), new Leg(acc.id(), amount)))));
+        }
+        return acc;
+    }
+
+    private PostingRequest transfer(String key, Account from, Account to, long amount) {
+        return new PostingRequest("TRANSFER", "TRANSFER", key, key, "concurrency test",
+            List.of(new Leg(from.id(), -amount), new Leg(to.id(), amount)));
+    }
+
+    private long balance(Account a) {
+        return accountRepository.findById(a.id()).orElseThrow().balance();
     }
 }

@@ -2,12 +2,9 @@ package com.svatsa.escrow.consumers;
 
 import com.svatsa.escrow.test.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
@@ -29,11 +26,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * are only created in Postgres migrations (V5__consumers.sql).
  * To run these tests, use a profile with Postgres testcontainers.
  */
-@SpringBootTest
-@Disabled("Requires Postgres testcontainers, currently using H2 in test profile")
-@TestPropertySource(properties = {
-    "escrow.auto-release.enabled=false"
-})
 public class ConsumersIT extends AbstractIntegrationTest {
 
     @Autowired

@@ -11,13 +11,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,9 +28,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Note: Requires Postgres with Flyway migrations.
  * Disabled for H2 in-memory tests. Enable in CI with docker-compose.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest
-@ActiveProfiles("test")
 @DisplayName("EscrowFlow Integration Tests")
 class EscrowFlowIT extends AbstractIntegrationTest {
 
@@ -56,12 +49,18 @@ class EscrowFlowIT extends AbstractIntegrationTest {
     @Autowired
     private LedgerService ledgerService;
 
+    @Autowired
+    private org.springframework.transaction.support.TransactionTemplate seedTx;
+
     private User client;
     private User freelancer;
 
+    /** PLATFORM_FEES is one shared system account, so tests assert how much it moved. */
+    private long feesBefore;
+
     @BeforeEach
     void setUp() {
-        clearLedger();
+        feesBefore = accountRepository.findByCode("PLATFORM_FEES").orElseThrow().balance();
         client = userRepository.save("Alice (Client)", "CLIENT");
         freelancer = userRepository.save("Bob (Freelancer)", "FREELANCER");
 
@@ -76,24 +75,24 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         );
 
         // Manually post a deposit (simulate Razorpay webhook)
-        ledgerService.post(
+        // Inside a transaction: LedgerService.post requires one (propagation MANDATORY).
+        seedTx.executeWithoutResult(status -> ledgerService.post(
             new PostingRequest(
                 "DEPOSIT",
                 "USER",
                 client.id().toString(),
-                "deposit:rzp:test123",
+                "deposit:rzp:test-" + java.util.UUID.randomUUID(),
                 "Test deposit",
                 List.of(
                     new Leg(externalBank.id(), -1_000_000),
                     new Leg(clientWallet.id(), 1_000_000)
                 )
             )
-        );
+        ));
     }
 
     @Test
     @DisplayName("happy path: fund → submit → approve → release a 3-milestone project")
-    @Transactional
     void testHappyPath() {
         // Create project with 3 milestones
         long m1Amount = 100_000; // 1k paise
@@ -161,7 +160,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         var platformFees = accountRepository.findByCode("PLATFORM_FEES").orElseThrow();
 
         assertThat(freelancerWallet.balance()).isEqualTo(freelancer1Payout);
-        assertThat(platformFees.balance()).isEqualTo(fee1);
+        assertThat(platformFees.balance() - feesBefore).as("PLATFORM_FEES change (it is shared by every test)").isEqualTo(fee1);
 
         // ESCROW balance should be reduced
         var escrowAfter = accountRepository.findById(project.escrowAccountId()).orElseThrow();
@@ -182,7 +181,6 @@ class EscrowFlowIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("cancel grace period: FUNDED milestone cannot be cancelled before dueAt + grace")
-    @Transactional
     void testCancelGracePeriod() {
         Instant now = clock.instant();
         Instant dueDate = now.plusSeconds(3600); // 1 hour from now
@@ -215,7 +213,6 @@ class EscrowFlowIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("DRAFT milestone can be cancelled immediately without grace period")
-    @Transactional
     void testCancelDraftImmediate() {
         Project project = escrowService.createProject(
             client.id(),
@@ -237,7 +234,6 @@ class EscrowFlowIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("invalid state transition: cannot submit a DRAFT milestone")
-    @Transactional
     void testInvalidStateTransition() {
         Project project = escrowService.createProject(
             client.id(),

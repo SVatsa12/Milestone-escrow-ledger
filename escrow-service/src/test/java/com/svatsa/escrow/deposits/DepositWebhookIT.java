@@ -1,267 +1,189 @@
 package com.svatsa.escrow.deposits;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.svatsa.escrow.escrow.User;
+import com.svatsa.escrow.escrow.UserRepository;
+import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.test.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration tests for Razorpay webhook handling.
- * 
- * Tests:
- * 1. Valid signature verification and payment processing
- * 2. Idempotency: same event processed multiple times → 1 credit
- * 3. Amount mismatch detection
- * 4. Invalid signature rejection
- * 5. Signature verification uses raw bytes (whitespace handling)
- * 
- * Note: Currently disabled because webhook tests require full Spring context setup
- * with proper event emission and ledger integration.
+ * P9: Razorpay webhooks, signed with the test secret, against real deposits created through
+ * DepositService (the fake gateway is active because no razorpay.key-id is configured).
+ * Every test checks the money, not just the HTTP status: the old version only checked
+ * webhook_events rows, which is how "no capture ever credited a wallet" went unnoticed.
  */
-@SpringBootTest
-@Disabled("Webhook tests require Testcontainers (Postgres, Kafka) to be running")
-@TestPropertySource(properties = {
-    "razorpay.key-id=test-key",
-    "razorpay.key-secret=test-secret",
-    "razorpay.webhook-secret=test-webhook-secret",
-    "escrow.auto-release.enabled=false"
-})
-public class DepositWebhookIT extends AbstractIntegrationTest {
+@TestPropertySource(properties = "razorpay.webhook-secret=" + DepositWebhookIT.SECRET)
+@DisplayName("Razorpay webhooks (P9)")
+class DepositWebhookIT extends AbstractIntegrationTest {
 
-    private static final String WEBHOOK_SECRET = "test-webhook-secret";
-    private static final String WEBHOOK_URL = "/webhooks/razorpay";
+    static final String SECRET = "test-webhook-secret";
 
-    @Autowired
-    private WebApplicationContext webApplicationContext;
+    @Autowired private DepositService depositService;
+    @Autowired private UserRepository userRepository;
+    @Autowired private AccountRepository accountRepository;
 
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
-    private WebhookSignatureVerifier signatureVerifier;
-
-    private MockMvc mockMvc;
+    private final HttpClient http = HttpClient.newHttpClient();
+    private User client;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders
-            .webAppContextSetup(webApplicationContext)
+        client = userRepository.save("depositor-" + UUID.randomUUID().toString().substring(0, 8), "CLIENT");
+    }
+
+    @Test
+    @DisplayName("a valid payment.captured credits the wallet exactly once")
+    void validCaptureCreditsTheWallet() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 50_000);
+
+        assertThat(send(evt(), captured(order.razorpayOrderId(), pay(), 50_000)).statusCode()).isEqualTo(200);
+
+        assertThat(wallet()).isEqualTo(50_000);
+        assertThat(depositStatus(order)).isEqualTo("CAPTURED");
+    }
+
+    @Test
+    @DisplayName("the same event id 50 times at once → one credit")
+    void concurrentDuplicateEventsCreditOnce() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 20_000);
+        String eventId = evt();
+        byte[] body = captured(order.razorpayOrderId(), pay(), 20_000);
+
+        List<CompletableFuture<HttpResponse<String>>> calls = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            calls.add(http.sendAsync(request(eventId, body, sign(body)), HttpResponse.BodyHandlers.ofString()));
+        }
+        for (var c : calls) {
+            assertThat(c.get().statusCode()).isEqualTo(200);
+        }
+
+        assertThat(wallet()).isEqualTo(20_000);
+    }
+
+    @Test
+    @DisplayName("order.paid after payment.captured (new event id, same payment) → still one credit")
+    void orderPaidAfterCaptureCreditsOnce() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 30_000);
+        String paymentId = pay();
+
+        assertThat(send(evt(), captured(order.razorpayOrderId(), paymentId, 30_000)).statusCode()).isEqualTo(200);
+        assertThat(send(evt(), orderPaid(order.razorpayOrderId(), paymentId, 30_000)).statusCode()).isEqualTo(200);
+
+        assertThat(wallet()).as("the business key (the deposit) catches the second event").isEqualTo(30_000);
+    }
+
+    @Test
+    @DisplayName("a bad signature → 400, nothing recorded, no money")
+    void badSignatureIsRejected() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 10_000);
+        String eventId = evt();
+        byte[] body = captured(order.razorpayOrderId(), pay(), 10_000);
+
+        HttpResponse<String> response = http.send(request(eventId, body, sign("tampered".getBytes())),
+            HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM webhook_events WHERE event_id = ?")
+            .param(eventId).query(Long.class).single()).isZero();
+        assertThat(wallet()).isZero();
+    }
+
+    @Test
+    @DisplayName("an amount that doesn't match the order → AMOUNT_MISMATCH, no money")
+    void amountMismatchMovesNoMoney() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 10_000);
+
+        assertThat(send(evt(), captured(order.razorpayOrderId(), pay(), 9_999)).statusCode()).isEqualTo(200);
+
+        assertThat(depositStatus(order)).isEqualTo("AMOUNT_MISMATCH");
+        assertThat(wallet()).isZero();
+    }
+
+    @Test
+    @DisplayName("the signature is checked against the raw bytes, not re-serialised JSON")
+    void signatureIsOverRawBytes() throws Exception {
+        var order = depositService.initiateDeposit(client.id(), 15_000);
+        String compact = new String(captured(order.razorpayOrderId(), pay(), 15_000), StandardCharsets.UTF_8);
+        byte[] spaced = compact.replace(",", ", ").replace(":", ": ").getBytes(StandardCharsets.UTF_8);
+
+        // Same JSON with extra whitespace, signed over exactly those bytes → valid.
+        assertThat(http.send(request(evt(), spaced, sign(spaced)), HttpResponse.BodyHandlers.ofString()).statusCode())
+            .isEqualTo(200);
+        assertThat(wallet()).isEqualTo(15_000);
+
+        // The compact (re-serialised) bytes with the signature of the spaced bytes → invalid.
+        assertThat(http.send(request(evt(), compact.getBytes(StandardCharsets.UTF_8), sign(spaced)),
+            HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(400);
+    }
+
+    // --- helpers -----------------------------------------------------------------------------
+
+    private static byte[] captured(String orderId, String paymentId, long amount) {
+        return ("{\"event\":\"payment.captured\",\"contains\":{\"payment\":{\"entity\":{\"id\":\"" + paymentId
+            + "\",\"order_id\":\"" + orderId + "\",\"amount\":" + amount + ",\"status\":\"captured\"}}}}")
+            .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] orderPaid(String orderId, String paymentId, long amount) {
+        return ("{\"event\":\"order.paid\",\"contains\":{\"order\":{\"entity\":{\"id\":\"" + orderId
+            + "\",\"receipt\":\"" + paymentId + "\",\"amount\":" + amount + ",\"status\":\"paid\"}}}}")
+            .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private HttpResponse<String> send(String eventId, byte[] body) throws Exception {
+        return http.send(request(eventId, body, sign(body)), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpRequest request(String eventId, byte[] body, String signature) {
+        return HttpRequest.newBuilder(URI.create("http://localhost:" + serverPort + "/webhooks/razorpay"))
+            .header("Content-Type", "application/json")
+            .header("X-Razorpay-Signature", signature)
+            .header("X-Razorpay-Event-Id", eventId)
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body))
             .build();
     }
 
-    /**
-     * Test: Valid signature verification and successful payment processing.
-     * 
-     * Scenario:
-     * - Send a valid payment.captured webhook with correct signature
-     * - Expect: 200 OK, webhook_events row created, deposit marked CAPTURED
-     */
-    @Test
-    void testValidWebhookProcessing() throws Exception {
-        String eventId = "evt_" + UUID.randomUUID();
-        String orderId = "order_12345";
-        String paymentId = "pay_12345";
-        long amountPaise = 50000; // ₹500
-
-        ObjectNode payload = buildPaymentCapturedPayload(orderId, paymentId, amountPaise);
-        byte[] rawBody = objectMapper.writeValueAsBytes(payload);
-        String signature = generateSignature(rawBody, WEBHOOK_SECRET);
-
-        mockMvc.perform(post(WEBHOOK_URL)
-            .header("X-Razorpay-Signature", signature)
-            .header("X-Razorpay-Event-Id", eventId)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(rawBody))
-            .andExpect(status().isOk());
-
-        // Verify webhook_events row was created
-        Integer webhookEventCount = jdbcClient.sql(
-            "SELECT COUNT(*) FROM webhook_events WHERE event_id = ?"
-        ).param(eventId).query(Integer.class).single();
-        assert webhookEventCount == 1;
-    }
-
-    /**
-     * Test: Invalid signature is rejected.
-     * 
-     * Scenario:
-     * - Send webhook with incorrect signature
-     * - Expect: 400 Bad Request, no webhook_events row created
-     */
-    @Test
-    void testInvalidSignatureRejection() throws Exception {
-        String eventId = "evt_" + UUID.randomUUID();
-        ObjectNode payload = buildPaymentCapturedPayload("order_99999", "pay_99999", 10000);
-        byte[] rawBody = objectMapper.writeValueAsBytes(payload);
-
-        // Use wrong secret to generate signature
-        String wrongSignature = generateSignature(rawBody, "wrong-secret");
-
-        mockMvc.perform(post(WEBHOOK_URL)
-            .header("X-Razorpay-Signature", wrongSignature)
-            .header("X-Razorpay-Event-Id", eventId)
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(rawBody))
-            .andExpect(status().isBadRequest());
-
-        // Verify webhook_events row was NOT created
-        Integer webhookEventCount = jdbcClient.sql(
-            "SELECT COUNT(*) FROM webhook_events WHERE event_id = ?"
-        ).param(eventId).query(Integer.class).single();
-        assert webhookEventCount == 0;
-    }
-
-    /**
-     * Test: Signature verification is constant-time (no timing attacks).
-     * 
-     * Scenario:
-     * - Verify that signature comparison is constant-time
-     * - Test by calling signatureVerifier directly
-     */
-    @Test
-    void testSignatureVerificationConstantTime() throws Exception {
-        byte[] payload = "test payload".getBytes(StandardCharsets.UTF_8);
-        String correctSignature = generateSignature(payload, WEBHOOK_SECRET);
-        String wrongSignature = "0000000000000000000000000000000000000000000000000000000000000000";
-
-        // Both calls should take similar time (no branch timing differences)
-        long startCorrect = System.nanoTime();
-        boolean resultCorrect = signatureVerifier.verify(payload, correctSignature, WEBHOOK_SECRET);
-        long timeCorrect = System.nanoTime() - startCorrect;
-
-        long startWrong = System.nanoTime();
-        boolean resultWrong = signatureVerifier.verify(payload, wrongSignature, WEBHOOK_SECRET);
-        long timeWrong = System.nanoTime() - startWrong;
-
-        assert resultCorrect : "Correct signature should verify";
-        assert !resultWrong : "Wrong signature should not verify";
-        // Note: timing assertion is fuzzy due to JVM JIT and GC; just verify both return quickly
-        assert timeCorrect < 100_000_000 : "Verification should be fast (< 100ms)"; // 100ms in nanos
-        assert timeWrong < 100_000_000 : "Verification should be fast (< 100ms)";
-    }
-
-    /**
-     * Test: Signature verification uses raw bytes, not re-serialised JSON.
-     * 
-     * Scenario:
-     * - Create a signature over original raw bytes
-     * - Re-serialise JSON with different formatting (extra whitespace, key order)
-     * - Original signature should still be valid (raw bytes)
-     * - Re-serialised JSON with original signature should fail
-     */
-    @Test
-    void testSignatureVerificationUsesRawBytes() throws Exception {
-        // Original payload with compact formatting
-        String compactJson = "{\"event\":\"payment.captured\",\"id\":\"evt_123\"}";
-        byte[] originalBytes = compactJson.getBytes(StandardCharsets.UTF_8);
-        String signature = generateSignature(originalBytes, WEBHOOK_SECRET);
-
-        // Verify original works
-        assert signatureVerifier.verify(originalBytes, signature, WEBHOOK_SECRET) :
-            "Original signature should verify";
-
-        // Add whitespace (different bytes)
-        String whitespaceJson = "{ \"event\": \"payment.captured\", \"id\": \"evt_123\" }";
-        byte[] whitespaceBytes = whitespaceJson.getBytes(StandardCharsets.UTF_8);
-
-        // Original signature should NOT verify against whitespace-modified bytes
-        assert !signatureVerifier.verify(whitespaceBytes, signature, WEBHOOK_SECRET) :
-            "Signature over whitespace-modified bytes should NOT verify";
-    }
-
-    /**
-     * Test: Duplicate webhook events are deduplicated.
-     * 
-     * Scenario:
-     * - Send same event_id 5 times
-     * - Expect: exactly 1 webhook_events row and no duplicate processing
-     */
-    @Test
-    void testDuplicateWebhookDeduplication() throws Exception {
-        String eventId = "evt_" + UUID.randomUUID();
-        ObjectNode payload = buildPaymentCapturedPayload("order_dup", "pay_dup", 25000);
-        byte[] rawBody = objectMapper.writeValueAsBytes(payload);
-        String signature = generateSignature(rawBody, WEBHOOK_SECRET);
-
-        // Send same webhook 5 times
-        for (int i = 0; i < 5; i++) {
-            mockMvc.perform(post(WEBHOOK_URL)
-                .header("X-Razorpay-Signature", signature)
-                .header("X-Razorpay-Event-Id", eventId)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(rawBody))
-                .andExpect(status().isOk());
+    private static String sign(byte[] body) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(body));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
-
-        // Verify webhook_events has exactly 1 row for this event
-        Integer webhookEventCount = jdbcClient.sql(
-            "SELECT COUNT(*) FROM webhook_events WHERE event_id = ?"
-        ).param(eventId).query(Integer.class).single();
-        assert webhookEventCount == 1 : "Should have exactly 1 webhook_events row";
     }
 
-    // ============ Helper methods ============
-
-    /**
-     * Build a payment.captured webhook payload.
-     */
-    private ObjectNode buildPaymentCapturedPayload(String orderId, String paymentId, long amountPaise) {
-        ObjectNode root = objectMapper.createObjectNode();
-        root.put("event", "payment.captured");
-        root.put("id", UUID.randomUUID().toString());
-        root.put("created_at", System.currentTimeMillis() / 1000);
-
-        ObjectNode contains = objectMapper.createObjectNode();
-        ObjectNode payment = objectMapper.createObjectNode();
-        ObjectNode entity = objectMapper.createObjectNode();
-        entity.put("id", paymentId);
-        entity.put("order_id", orderId);
-        entity.put("amount", amountPaise);
-        entity.put("status", "captured");
-        entity.put("currency", "INR");
-        payment.set("entity", entity);
-        contains.set("payment", payment);
-
-        root.set("contains", contains);
-        return root;
+    private long wallet() {
+        return accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().balance();
     }
 
-    /**
-     * Generate HMAC-SHA256 signature for webhook payload.
-     */
-    private String generateSignature(byte[] payload, String secret) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        SecretKeySpec keySpec = new SecretKeySpec(
-            secret.getBytes(StandardCharsets.UTF_8),
-            0,
-            secret.getBytes(StandardCharsets.UTF_8).length,
-            "HmacSHA256"
-        );
-        mac.init(keySpec);
-        byte[] digest = mac.doFinal(payload);
+    private String depositStatus(DepositService.DepositResponse order) {
+        return jdbcClient.sql("SELECT status FROM deposits WHERE id = ?").param(order.depositId()).query(String.class).single();
+    }
 
-        // Convert to hex
-        StringBuilder sb = new StringBuilder();
-        for (byte b : digest) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+    private static String evt() {
+        return "evt_" + UUID.randomUUID();
+    }
+
+    private static String pay() {
+        return "pay_" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
     }
 }

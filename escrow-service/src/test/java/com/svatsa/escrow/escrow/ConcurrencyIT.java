@@ -14,13 +14,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,9 +31,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Note: Requires Postgres with Flyway migrations.
  * Disabled for H2 in-memory tests. Enable in CI with docker-compose.
  */
-@Disabled("Requires Postgres with Flyway migrations; enable in CI with docker-compose")
-@SpringBootTest
-@ActiveProfiles("test")
 @DisplayName("Concurrency Integration Tests")
 class ConcurrencyIT extends AbstractIntegrationTest {
 
@@ -63,6 +56,9 @@ class ConcurrencyIT extends AbstractIntegrationTest {
     private LedgerService ledgerService;
 
     @Autowired
+    private org.springframework.transaction.support.TransactionTemplate seedTx;
+
+    @Autowired
     private AutoReleaseJob autoReleaseJob;
 
     private User client;
@@ -72,7 +68,6 @@ class ConcurrencyIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        clearLedger();
 
         client = userRepository.save("Alice (Client)", "CLIENT");
         freelancer = userRepository.save("Bob (Freelancer)", "FREELANCER");
@@ -87,19 +82,20 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             true
         );
 
-        ledgerService.post(
+        // Inside a transaction: LedgerService.post requires one (propagation MANDATORY).
+        seedTx.executeWithoutResult(status -> ledgerService.post(
             new com.svatsa.escrow.ledger.PostingRequest(
                 "DEPOSIT",
                 "USER",
                 client.id().toString(),
-                "deposit:rzp:setup",
+                "deposit:rzp:test-" + java.util.UUID.randomUUID(),
                 "Setup deposit",
                 List.of(
                     new com.svatsa.escrow.ledger.Leg(externalBank.id(), -1_000_000),
                     new com.svatsa.escrow.ledger.Leg(clientWallet.id(), 1_000_000)
                 )
             )
-        );
+        ));
 
         // Create project
         Instant now = clock.instant();
@@ -149,9 +145,9 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         // Other 4 should either fail with invalid state or duplicate key
         assertThat(successCount.get() + failureCount.get()).isEqualTo(threadCount);
 
-        // Verify milestone is APPROVED
+        // Approve and release happen in one transaction (AGENTS.md), so the end state is RELEASED
         Milestone approved = milestoneRepository.findById(milestone.id()).orElseThrow();
-        assertThat(approved.state()).isEqualTo(MilestoneState.APPROVED);
+        assertThat(approved.state()).isEqualTo(MilestoneState.RELEASED);
     }
 
     @Test

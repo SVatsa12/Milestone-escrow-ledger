@@ -303,6 +303,11 @@ members under `"properties"`, so the body had no top-level `code: RATE_LIMITED` 
 **Fix:** use Spring's configured `ObjectMapper`.
 Regression: `RateLimiterIT.limitIsHitAtNPlusOne`.
 
+### 35. A dispute split that doesn't add up was 400, not 422
+P6 specifies 422; the code threw `IllegalArgumentException` (400). **Fix:**
+`DomainException("VALIDATION_FAILED", 422)`.
+Regression: `DisputeRulesIT.splitThatDoesNotAddUpIs422`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

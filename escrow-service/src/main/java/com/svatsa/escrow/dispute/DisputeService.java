@@ -200,7 +200,9 @@ public class DisputeService {
 
         long totalShare = freelancerSharePaise + clientSharePaise;
         if (totalShare != milestone.amountPaise()) {
-            throw new IllegalArgumentException(
+            // P6: a split that doesn't add up is 422 (it was an IllegalArgumentException -> 400).
+            throw new com.svatsa.escrow.common.DomainException("VALIDATION_FAILED",
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
                 String.format(
                     "Shares must sum to milestone amount. Got %d + %d = %d, expected %d",
                     freelancerSharePaise,

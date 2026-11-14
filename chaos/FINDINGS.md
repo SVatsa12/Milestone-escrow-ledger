@@ -132,11 +132,13 @@ Regression: `ErrorMappingIT`.
 settings were also under Boot 2's `spring.redis.*` (ignored); they're now `spring.data.redis.*`.
 Regression: `RateLimitConfigBindingTest` binds the real `application.yml`.
 
+### 12. Kafka consumers crash-looped (was an open issue above)
+The relay publishes JSON without type headers, and `JsonDeserializer` had no default type, so
+every record failed and the consumer was stuck at offset 0. Fixed in config: `JsonNode` default
+type, type headers ignored, wrapped in `ErrorHandlingDeserializer`.
+Regression: `AuditLogConsumerIT` waits for a ledger entry's event to land in `audit_log` exactly once.
+
 ## Open issues (not fixed yet)
-- **Kafka consumers crash-loop.** `JsonDeserializer` gets records with no type headers and no
-  default type (`No type information in headers`), and there is no `ErrorHandlingDeserializer`,
-  so the audit and notification consumers are stuck at offset 0. This belongs to C5 (Kafka
-  outage, exactly one `audit_log` row per eventId).
 - **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
   P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto
   `AbstractToxiproxyIT` (or a plain Postgres base) will likely surface more bugs like #5 and #6.

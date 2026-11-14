@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: mock-payout-provider
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/escrow?currentSchema=provider
+    username: ${DB_USER:escrow}
+    password: ${DB_PASSWORD:escrow}
+    hikari:
+      maximum-pool-size: 10
+      auto-commit: false
+  flyway:
+    enabled: true
+    schemas: provider
+
+server:
+  port: 9090
+  servlet:
+    context-path: /

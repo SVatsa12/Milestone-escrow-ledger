@@ -1,0 +1,2 @@
+-- Initial schema placeholder for provider
+-- Actual provider schema comes in V1__payouts.sql

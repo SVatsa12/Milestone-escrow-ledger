@@ -119,6 +119,13 @@ scripts use against real Postgres. Each fix has its own regression test, named b
 converter. Fixed with `?::interval` on write and an explicit row mapper on read.
 Regression: `ProjectApiIT.createAndReadProject`.
 
+### 10. State conflicts returned 500
+`InvalidStateTransitionException`, `CancelTooEarlyException` and `DisputeAlreadyOpenException`
+extend `RuntimeException`, not `DomainException`, so a second approve on the same milestone was a
+500. They now map to `409 INVALID_STATE_TRANSITION`. Services' `IllegalArgumentException`
+("... not found") now maps to `404 NOT_FOUND`, and other bad input to `400 VALIDATION_FAILED`.
+Regression: `ErrorMappingIT`.
+
 ## Open issues (not fixed yet)
 - **Kafka consumers crash-loop.** `JsonDeserializer` gets records with no type headers and no
   default type (`No type information in headers`), and there is no `ErrorHandlingDeserializer`,

@@ -48,6 +48,38 @@ public class GlobalExceptionHandler {
             .body(problem);
     }
 
+    /**
+     * State-machine conflicts. These exceptions predate DomainException and used to fall
+     * through to the generic handler as 500s (AGENTS.md requires 409 INVALID_STATE_TRANSITION).
+     */
+    @ExceptionHandler({
+        com.svatsa.escrow.escrow.InvalidStateTransitionException.class,
+        com.svatsa.escrow.escrow.CancelTooEarlyException.class,
+        com.svatsa.escrow.dispute.DisputeAlreadyOpenException.class
+    })
+    public ResponseEntity<ProblemDetail> handleStateConflict(RuntimeException ex) {
+        return problem(HttpStatus.CONFLICT, "INVALID_STATE_TRANSITION", ex.getMessage());
+    }
+
+    /**
+     * Services throw IllegalArgumentException for unknown ids ("... not found") and bad input.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ProblemDetail> handleIllegalArgument(IllegalArgumentException ex) {
+        String message = ex.getMessage() == null ? "Invalid request" : ex.getMessage();
+        if (message.toLowerCase().contains("not found")) {
+            return problem(HttpStatus.NOT_FOUND, "NOT_FOUND", message);
+        }
+        return problem(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", message);
+    }
+
+    private static ResponseEntity<ProblemDetail> problem(HttpStatus status, String code, String detail) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setTitle(status.getReasonPhrase());
+        problem.setProperty("code", code);
+        return ResponseEntity.status(status).body(problem);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ProblemDetail> handleGenericException(
         Exception ex,

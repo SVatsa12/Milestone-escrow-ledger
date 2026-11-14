@@ -1,0 +1,6 @@
+# Keep shell scripts LF on every OS: with core.autocrlf=true a Windows checkout would
+# otherwise give mvnw CRLF endings and "./mvnw" fails with "/bin/sh^M".
+* text=auto
+mvnw text eol=lf
+*.sh text eol=lf
+*.cmd text eol=crlf

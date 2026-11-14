@@ -180,6 +180,12 @@ with `GET /admin/invariants` and the reconciliation job. **Fix:** no try/catch; 
 run fails loudly.
 Regression: every integration test's @AfterEach (proven with a balance-corrupting test).
 
+### 16. A journal entry with no postings could commit
+The deferred balancing trigger fires on postings inserts, so an entry nobody posted to was never
+checked, and I1 grouped by `postings.entry_id`, so it couldn't see it either. **Fix:** `V9` adds the
+same deferred check on `journal_entries` inserts; I1 also looks for entries with no postings.
+Regression: `LedgerSchemaIT.entryWithNoPostingsFailsAtCommit`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

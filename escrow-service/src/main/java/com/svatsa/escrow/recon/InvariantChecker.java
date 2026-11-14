@@ -112,6 +112,17 @@ public class InvariantChecker {
                 "Journal entry " + id + " has fewer than 2 postings"));
         }
 
+        // Entries with NO postings never show up when grouping postings; look for them directly.
+        List<Long> emptyIds = jdbcClient.sql("""
+            SELECT je.id FROM journal_entries je
+            WHERE NOT EXISTS (SELECT 1 FROM postings p WHERE p.entry_id = je.id)
+            """)
+            .query(Long.class)
+            .list();
+        for (Long id : emptyIds) {
+            violations.add(new Violation("I1", "Journal entry " + id + " has no postings"));
+        }
+
         return violations;
     }
 

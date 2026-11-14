@@ -99,6 +99,15 @@ Found as soon as the chaos context booted against real Postgres:
 - Also, test JVMs now run with `-Duser.timezone=UTC`. A Windows JVM defaults to
   `Asia/Calcutta`, which Postgres 16 rejects at connect.
 
+## Bugs found while building the load tests (P15)
+These turned up when an end-to-end API test and a k6 smoke run drove every endpoint the load
+scripts use against real Postgres. Each fix has its own regression test, named below.
+
+### 9. Creating a project always failed on Postgres
+`review_window` (INTERVAL) was bound as varchar and read back with no INTERVAL→Duration
+converter. Fixed with `?::interval` on write and an explicit row mapper on read.
+Regression: `ProjectApiIT.createAndReadProject`.
+
 ## Open issues (not fixed yet)
 - **Kafka consumers crash-loop.** `JsonDeserializer` gets records with no type headers and no
   default type (`No type information in headers`), and there is no `ErrorHandlingDeserializer`,

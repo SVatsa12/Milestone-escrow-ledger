@@ -23,14 +23,15 @@ public class ProjectRepository {
      */
     public Optional<Project> findById(Long id) {
         return jdbc.sql("""
-            SELECT id, client_id, freelancer_id, title, review_window,
+            SELECT id, client_id, freelancer_id, title,
+                   EXTRACT(EPOCH FROM review_window)::bigint AS review_window_seconds,
                    status, escrow_account_id, dispute_hold_account_id,
                    created_at, version
             FROM projects
             WHERE id = ?
             """)
             .param(id)
-            .query(Project.class)
+            .query(ProjectRepository::mapRow)
             .optional();
     }
 
@@ -39,7 +40,8 @@ public class ProjectRepository {
      */
     public List<Project> findByClientId(Long clientId) {
         return jdbc.sql("""
-            SELECT id, client_id, freelancer_id, title, review_window,
+            SELECT id, client_id, freelancer_id, title,
+                   EXTRACT(EPOCH FROM review_window)::bigint AS review_window_seconds,
                    status, escrow_account_id, dispute_hold_account_id,
                    created_at, version
             FROM projects
@@ -47,7 +49,7 @@ public class ProjectRepository {
             ORDER BY created_at DESC
             """)
             .param(clientId)
-            .query(Project.class)
+            .query(ProjectRepository::mapRow)
             .list();
     }
 
@@ -68,7 +70,7 @@ public class ProjectRepository {
                 status, escrow_account_id, dispute_hold_account_id,
                 created_at, version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, now(), 0)
+            VALUES (?, ?, ?, ?::interval, ?, ?, ?, now(), 0)
             RETURNING id
             """)
             .param(clientId)
@@ -97,5 +99,23 @@ public class ProjectRepository {
         if (rows == 0) {
             throw new IllegalStateException("Project not found: " + projectId);
         }
+    }
+
+    /**
+     * Explicit mapping: there is no converter from Postgres INTERVAL to java.time.Duration,
+     * so review_window is read as seconds.
+     */
+    private static Project mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        return new Project(
+            rs.getLong("id"),
+            rs.getLong("client_id"),
+            rs.getLong("freelancer_id"),
+            rs.getString("title"),
+            Duration.ofSeconds(rs.getLong("review_window_seconds")),
+            rs.getString("status"),
+            rs.getLong("escrow_account_id"),
+            rs.getLong("dispute_hold_account_id"),
+            rs.getObject("created_at", java.time.OffsetDateTime.class).toInstant(),
+            rs.getInt("version"));
     }
 }

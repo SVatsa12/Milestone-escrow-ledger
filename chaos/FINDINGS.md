@@ -200,6 +200,12 @@ Regression: `TransferApiIT.sameKeyWithDifferentBodyIs422IdempotencyKeyReused`.
 `GET /api/v1/accounts/{id}` threw a `ValidationException`. **Fix:** `404 NOT_FOUND`.
 Regression: `TransferApiIT.unknownAccountIs404NotFound`.
 
+### 20. Every reconciliation query failed on Postgres (`?1` placeholders)
+`ReconciliationRepository` used JPA-style `?1, ?2, …` placeholders, which JDBC doesn't understand,
+so P12's reconciliation never ran once. **Fix:** plain `?` (each was used once, in order, and bound by
+explicit index).
+Regression: `ReconciliationIT` (all repository tests).
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

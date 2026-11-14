@@ -38,7 +38,7 @@ public class ReconciliationRepository {
 
         jdbcClient.sql("""
             INSERT INTO recon_runs (id, run_date, entity_type, started_at, status)
-            VALUES (?1, ?2, ?3, ?4, 'RUNNING')
+            VALUES (?, ?, ?, ?, 'RUNNING')
             """)
             .param(1, id)
             .param(2, runDate)
@@ -56,7 +56,7 @@ public class ReconciliationRepository {
         return jdbcClient.sql("""
             SELECT id, run_date, entity_type, started_at, completed_at, status, mismatch_count, notes
             FROM recon_runs
-            WHERE run_date = ?1 AND entity_type = ?2
+            WHERE run_date = ? AND entity_type = ?
             ORDER BY started_at DESC
             LIMIT 1
             """)
@@ -82,7 +82,7 @@ public class ReconciliationRepository {
         return jdbcClient.sql("""
             SELECT id, run_date, entity_type, started_at, completed_at, status, mismatch_count, notes
             FROM recon_runs
-            WHERE id = ?1
+            WHERE id = ?
             """)
             .param(1, id)
             .query((rs, rowNum) -> new ReconRun(
@@ -105,7 +105,7 @@ public class ReconciliationRepository {
         return jdbcClient.sql("""
             SELECT id, run_date, entity_type, started_at, completed_at, status, mismatch_count, notes
             FROM recon_runs
-            WHERE run_date = ?1
+            WHERE run_date = ?
             ORDER BY started_at DESC
             """)
             .param(1, runDate)
@@ -128,8 +128,8 @@ public class ReconciliationRepository {
     public void markCompleted(UUID runId, int mismatchCount, String notes) {
         jdbcClient.sql("""
             UPDATE recon_runs
-            SET completed_at = ?1, status = ?2, mismatch_count = ?3, notes = ?4
-            WHERE id = ?5
+            SET completed_at = ?, status = ?, mismatch_count = ?, notes = ?
+            WHERE id = ?
             """)
             .param(1, SqlTime.ts(Instant.now()))
             .param(2, "COMPLETED")
@@ -145,8 +145,8 @@ public class ReconciliationRepository {
     public void markFailed(UUID runId, String reason) {
         jdbcClient.sql("""
             UPDATE recon_runs
-            SET completed_at = ?1, status = ?2, notes = ?3
-            WHERE id = ?4
+            SET completed_at = ?, status = ?, notes = ?
+            WHERE id = ?
             """)
             .param(1, SqlTime.ts(Instant.now()))
             .param(2, "FAILED")
@@ -163,7 +163,7 @@ public class ReconciliationRepository {
             INSERT INTO recon_mismatches
             (id, recon_run_id, entity_id, entity_type, expected_state, actual_state,
              expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)
             .param(1, mismatch.id())
             .param(2, mismatch.reconRunId())
@@ -187,7 +187,7 @@ public class ReconciliationRepository {
             SELECT id, recon_run_id, entity_id, entity_type, expected_state, actual_state,
                    expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken, created_at
             FROM recon_mismatches
-            WHERE recon_run_id = ?1
+            WHERE recon_run_id = ?
             ORDER BY created_at DESC
             """)
             .param(1, runId)

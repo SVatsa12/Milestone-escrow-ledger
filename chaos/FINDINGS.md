@@ -186,6 +186,11 @@ checked, and I1 grouped by `postings.entry_id`, so it couldn't see it either. **
 same deferred check on `journal_entries` inserts; I1 also looks for entries with no postings.
 Regression: `LedgerSchemaIT.entryWithNoPostingsFailsAtCommit`.
 
+### 17. The non-negative balance CHECK wasn't named as P2 specifies
+V1 created `CHECK (allow_negative OR balance >= 0)` unnamed (Postgres called it `accounts_check`);
+P2 specifies `CONSTRAINT balance_non_negative`. **Fix:** `V9` renames it.
+Regression: `LedgerSchemaIT.nonNegativeAccountCannotGoNegative`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

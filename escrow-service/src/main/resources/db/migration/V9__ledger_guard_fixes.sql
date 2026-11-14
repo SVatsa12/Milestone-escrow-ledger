@@ -34,3 +34,7 @@ AFTER INSERT ON journal_entries
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 EXECUTE FUNCTION check_new_entry_has_postings();
+
+-- 2. P2 specifies the non-negative guard as CONSTRAINT balance_non_negative; V1 created it
+--    unnamed, so Postgres called it accounts_check. Give it the specified name.
+ALTER TABLE accounts RENAME CONSTRAINT accounts_check TO balance_non_negative;

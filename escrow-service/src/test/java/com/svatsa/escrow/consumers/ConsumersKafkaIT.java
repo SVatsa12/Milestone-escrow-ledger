@@ -95,8 +95,8 @@ class ConsumersKafkaIT extends AbstractIntegrationTest {
         User freelancer = userRepository.save("f-" + run, "FREELANCER");
         long wallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
-            "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -50_000), new Leg(wallet, 50_000)))));
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "USER", client.id().toString(),
+            "seed:test-" + run, "seed", List.of(new Leg(bank, -50_000), new Leg(wallet, 50_000)))));
 
         Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "lifecycle-" + run,
             Duration.ofDays(5), List.of(new EscrowService.MilestoneSpec("m1", 10_000, Instant.now().plus(Duration.ofDays(30)))));

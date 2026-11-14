@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Verifies ledger invariants through SQL queries.
  * 
- * Invariants (I1-I9) are properties that must always hold if the system is correct.
+ * Invariants (I1-I10) are properties that must always hold if the system is correct.
  * Each is checked via a SQL query; violations indicate a bug or corruption.
  * 
  * I1: Every journal entry sums to 0 and has >= 2 postings
@@ -40,6 +40,12 @@ import java.util.List;
  *
  * I9: Outbox staleness (warning): no unpublished outbox rows older than 5 minutes.
  *     Indicates relay job may be stuck or Kafka unavailable.
+ *
+ * I10: Business idempotency keys (invariant 8): every journal entry of type FUND, RELEASE,
+ *     DISPUTE_FREEZE, DISPUTE_RESOLVE, REFUND, DEPOSIT or PAYOUT_* carries exactly the key the
+ *     AGENTS.md money-flows table gives for its reference (see LedgerKeys). A DEPOSIT's key is
+ *     deposit:rzp:{the payment id recorded on the deposit it references}. An unknown PAYOUT_*
+ *     type is a violation too.
  */
 @Service
 public class InvariantChecker {
@@ -51,7 +57,7 @@ public class InvariantChecker {
     }
 
     /**
-     * Check all invariants (I1-I9) and return a list of violations (empty if all OK).
+     * Check all invariants (I1-I10) and return a list of violations (empty if all OK).
      */
     public List<Violation> check() {
         // No try/catch: a check that cannot run must fail loudly. This used to catch every
@@ -67,6 +73,7 @@ public class InvariantChecker {
         violations.addAll(checkI7());
         violations.addAll(checkI8());
         violations.addAll(checkI9());
+        violations.addAll(checkI10());
         return violations;
     }
 
@@ -379,6 +386,54 @@ public class InvariantChecker {
                 "(relay may be stuck)"));
         }
 
+        return violations;
+    }
+
+    /**
+     * I10: every business-flow entry has the idempotency key its type and reference dictate.
+     */
+    private List<Violation> checkI10() {
+        List<String> wrong = jdbcClient.sql("""
+            SELECT 'entry ' || je.id || ' (' || je.type || ' ' || COALESCE(je.reference_type, '-') || ':'
+                   || COALESCE(je.reference_id, '-') || ') has key ' || je.idempotency_key
+                   || ', expected ' || COALESCE(x.expected, '(no pattern for this type/reference)')
+            FROM journal_entries je
+            LEFT JOIN deposits d
+                   ON je.type = 'DEPOSIT' AND je.reference_type = 'DEPOSIT' AND d.id::text = je.reference_id
+            CROSS JOIN LATERAL (
+                SELECT CASE
+                    WHEN je.type = 'FUND' AND je.reference_type = 'PROJECT'
+                        THEN 'fund:project:' || je.reference_id
+                    WHEN je.type = 'RELEASE' AND je.reference_type = 'MILESTONE'
+                        THEN 'release:milestone:' || je.reference_id
+                    WHEN je.type = 'DISPUTE_FREEZE' AND je.reference_type = 'MILESTONE'
+                        THEN 'dispute-freeze:milestone:' || je.reference_id
+                    WHEN je.type = 'DISPUTE_RESOLVE' AND je.reference_type = 'DISPUTE'
+                        THEN 'dispute-resolve:' || je.reference_id
+                    WHEN je.type = 'REFUND' AND je.reference_type = 'MILESTONE'
+                        THEN 'refund:milestone:' || je.reference_id
+                    WHEN je.type = 'DEPOSIT'
+                        THEN 'deposit:rzp:' || d.razorpay_payment_id
+                    WHEN je.type = 'PAYOUT_RESERVE' AND je.reference_type = 'PAYOUT'
+                        THEN 'payout:reserve:' || je.reference_id
+                    WHEN je.type = 'PAYOUT_CONFIRM' AND je.reference_type = 'PAYOUT'
+                        THEN 'payout:confirm:' || je.reference_id
+                    WHEN je.type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL') AND je.reference_type = 'PAYOUT'
+                        THEN 'payout:reverse:' || je.reference_id
+                END AS expected
+            ) x
+            WHERE (je.type IN ('FUND', 'RELEASE', 'DISPUTE_FREEZE', 'DISPUTE_RESOLVE', 'REFUND', 'DEPOSIT')
+                   OR left(je.type, 7) = 'PAYOUT_')
+              AND je.idempotency_key IS DISTINCT FROM x.expected
+            ORDER BY je.id
+            """)
+            .query(String.class)
+            .list();
+
+        List<Violation> violations = new ArrayList<>();
+        for (String w : wrong) {
+            violations.add(new Violation("I10", "Business idempotency key mismatch: " + w));
+        }
         return violations;
     }
 }

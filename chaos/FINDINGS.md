@@ -337,12 +337,33 @@ These were listed as open issues below; each is now closed with its own tests.
   actor is 403 and changes nothing; a freelancer of project B can't submit on project A; a client
   can't top up someone else's wallet; 401 cases; the transition audit trail).
 
+### 37. Escrow flows posted with the caller's Idempotency-Key (invariant 8) — closed
+- **Gap:** fund, release, dispute freeze, dispute resolve and refund posted their journal entries
+  as type `TRANSFER` keyed by the *HTTP* Idempotency-Key (the dispute controller built the right
+  key itself, but the service would post whatever it was given). Only the conditional state update
+  stopped a second posting; with that guard bypassed (a bug, a manual DB fix, a racing job) the
+  same approve under a new HTTP key released the money twice.
+- **Fix:** `ledger.LedgerKeys` holds the entry types and the AGENTS.md key for each flow, and
+  every `LedgerService.post` uses it: `FUND fund:project:{id}`, `RELEASE release:milestone:{id}`,
+  `DISPUTE_FREEZE dispute-freeze:milestone:{id}`, `DISPUTE_RESOLVE dispute-resolve:{id}`,
+  `REFUND refund:milestone:{id}`, `DEPOSIT deposit:rzp:{paymentId}`,
+  `PAYOUT_RESERVE|CONFIRM payout:reserve|confirm:{id}`, `PAYOUT_REVERSE|CANCEL payout:reverse:{id}`.
+  The HTTP Idempotency-Key is still required, and only for replaying responses. The dev-only
+  simulated deposit is now type `SIMULATED_DEPOSIT` (it is not a Razorpay capture), and test seed
+  postings are type `TEST_SEED`.
+- **New invariant I10** (`InvariantChecker`): every FUND, RELEASE, DISPUTE_FREEZE,
+  DISPUTE_RESOLVE, REFUND, DEPOSIT or PAYOUT_* entry has exactly the key its reference dictates (a
+  DEPOSIT's key must match the payment id recorded on its deposit; an unknown PAYOUT_* type is a
+  violation). It runs after every integration test.
+- **Also fixed:** resolving an already resolved dispute threw `IllegalStateException` (500); it is
+  now `409 INVALID_STATE_TRANSITION`.
+- **Regression:** `ledger/LedgerIdempotencyKeyIT` (per flow: once over HTTP, again with another
+  HTTP key, then with the state guard bypassed in SQL and the service called directly, or a direct
+  ledger replay where the schema forbids the bypass; exactly one entry each time. All 9 tests fail
+  against the old code), `DepositWebhookIT.depositKeyHoldsWithoutTheStatusGuard`, and
+  `i10FlagsWrongKeys`.
+
 ## Open issues (not fixed yet)
-- **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
-  and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)
-  instead of `fund:project:{id}`, `release:milestone:{id}`, and so on. Money is still safe today,
-  because the conditional state update rejects the second transition and rolls back its posting.
-  But the ledger-level guard of invariant 8 is missing for these flows.
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
   - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).

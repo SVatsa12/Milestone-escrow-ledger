@@ -141,7 +141,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
         PROVIDER.reset(com.svatsa.escrow.chaos.FakePayoutProvider.Mode.SUCCESS, 1, 0);
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         seedTx.executeWithoutResult(s -> ledgerService.post(new com.svatsa.escrow.ledger.PostingRequest(
-            "DEPOSIT", "TEST_SEED", "recon", "recon-seed:" + UUID.randomUUID(), "seed",
+            "TEST_SEED", "TEST_SEED", "recon", "recon-seed:" + UUID.randomUUID(), "seed",
             java.util.List.of(new com.svatsa.escrow.ledger.Leg(bank, -amount),
                 new com.svatsa.escrow.ledger.Leg(walletAccountId, amount)))));
         Payout payout = payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletAccountId, amount, "recon-" + UUID.randomUUID());

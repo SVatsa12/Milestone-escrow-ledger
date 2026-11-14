@@ -246,7 +246,7 @@ class C2ProviderConnectionResetChaosIT extends AbstractChaosIT {
     private void fund(long walletId, long amount) {
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
-            "DEPOSIT", "TEST_SEED", String.valueOf(walletId), "c2-seed:" + UUID.randomUUID(), "C2 seed",
+            "TEST_SEED", "TEST_SEED", String.valueOf(walletId), "c2-seed:" + UUID.randomUUID(), "C2 seed",
             List.of(new Leg(bank, -amount), new Leg(walletId, amount)))));
     }
 

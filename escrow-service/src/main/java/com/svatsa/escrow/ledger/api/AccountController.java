@@ -182,8 +182,10 @@ public class AccountController {
 
                 // Post the deposit
                 var result = ledgerService.post(new PostingRequest(
-                    "DEPOSIT",
-                    "DEPOSIT",
+                    // Not a Razorpay DEPOSIT (keyed deposit:rzp:{paymentId}, checked by I10):
+                    // a dev-only credit keyed by the caller's request.
+                    "SIMULATED_DEPOSIT",
+                    "SIMULATED_DEPOSIT",
                     idempotencyKey,
                     "deposit:simulate:" + idempotencyKey,
                     "Simulated deposit",

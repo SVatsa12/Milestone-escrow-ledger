@@ -56,8 +56,8 @@ class AutoReleaseIT extends AbstractIntegrationTest {
         freelancer = userRepository.save("freelancer-" + run, "FREELANCER");
         long wallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
-            "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -1_000_000), new Leg(wallet, 1_000_000)))));
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "USER", client.id().toString(),
+            "seed:test-" + run, "seed", List.of(new Leg(bank, -1_000_000), new Leg(wallet, 1_000_000)))));
     }
 
     @Test

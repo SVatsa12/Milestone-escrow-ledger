@@ -117,8 +117,8 @@ class OutboxIT extends AbstractIntegrationTest {
         User freelancer = userRepository.save("f-" + run, "FREELANCER");
         long wallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
-            "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -10_000), new Leg(wallet, 10_000)))));
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "USER", client.id().toString(),
+            "seed:test-" + run, "seed", List.of(new Leg(bank, -10_000), new Leg(wallet, 10_000)))));
         Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "outbox-" + run,
             Duration.ofDays(5), List.of(new EscrowService.MilestoneSpec("m1", 5_000, Instant.now().plus(Duration.ofDays(30)))));
         escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + run);

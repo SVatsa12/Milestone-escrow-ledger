@@ -96,7 +96,7 @@ class C3DBLatencyChaosIT extends AbstractChaosIT {
             long ownerId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
             long id = accountRepository.create("CLIENT_WALLET:" + ownerId, AccountType.CLIENT_WALLET, ownerId, false).id();
             tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
-                "DEPOSIT", "TEST_SEED", String.valueOf(id), "c3-seed:" + run + ":" + id, "C3 seed",
+                "TEST_SEED", "TEST_SEED", String.valueOf(id), "c3-seed:" + run + ":" + id, "C3 seed",
                 List.of(new Leg(bank, -FUNDED_PAISE), new Leg(id, FUNDED_PAISE)))));
             wallets.add(id);
         }

@@ -1,6 +1,7 @@
 package com.svatsa.escrow.deposits;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.svatsa.escrow.ledger.LedgerKeys;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.Leg;
 import com.svatsa.escrow.ledger.PostingRequest;
@@ -168,10 +169,10 @@ public class DepositWebhookService {
 
         long entryId = ledgerService.post(
             new PostingRequest(
-                "DEPOSIT",
+                LedgerKeys.DEPOSIT,
                 "DEPOSIT",
                 deposit.id().toString(),
-                "deposit:rzp:" + paymentId,
+                LedgerKeys.deposit(paymentId),
                 "Razorpay deposit captured",
                 legs
             )

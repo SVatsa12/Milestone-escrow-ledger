@@ -51,7 +51,7 @@ public class DisputeController {
             actor,
             request.milestoneId(),
             request.reason(),
-            "dispute-freeze:milestone:" + request.milestoneId()
+            idempotencyKey
         );
 
         return ResponseEntity.status(HttpStatus.CREATED).body(dispute);
@@ -84,7 +84,7 @@ public class DisputeController {
             request.freelancerSharePaise(),
             request.clientSharePaise(),
             request.resolutionNote() != null ? request.resolutionNote() : "",
-            "dispute-resolve:" + id
+            idempotencyKey
         );
 
         return ResponseEntity.ok().build();

@@ -92,6 +92,24 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("the ledger key deposit:rzp:{paymentId} holds even if the deposit row's CAPTURED guard is bypassed")
+    void depositKeyHoldsWithoutTheStatusGuard() throws Exception {
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 40_000);
+        String paymentId = pay();
+        assertThat(send(evt(), captured(order.razorpayOrderId(), paymentId, 40_000)).statusCode()).isEqualTo(200);
+
+        // Put the deposit back to CREATED behind the service's back, then deliver the same
+        // payment under a new event id (a new "request"): only the ledger key can stop it now.
+        jdbcClient.sql("UPDATE deposits SET status = 'CREATED' WHERE id = ?").param(order.depositId()).update();
+        assertThat(send(evt(), captured(order.razorpayOrderId(), paymentId, 40_000)).statusCode()).isEqualTo(200);
+
+        assertThat(wallet()).as("credited once").isEqualTo(40_000);
+        assertThat(jdbcClient.sql("SELECT idempotency_key FROM journal_entries WHERE type = 'DEPOSIT' AND reference_id = ?")
+            .param(order.depositId().toString()).query(String.class).list())
+            .containsExactly(com.svatsa.escrow.ledger.LedgerKeys.deposit(paymentId));
+    }
+
+    @Test
     @DisplayName("a bad signature → 400, nothing recorded, no money")
     void badSignatureIsRejected() throws Exception {
         var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 10_000);

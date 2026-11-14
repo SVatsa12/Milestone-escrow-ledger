@@ -79,10 +79,10 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         // Inside a transaction: LedgerService.post requires one (propagation MANDATORY).
         seedTx.executeWithoutResult(status -> ledgerService.post(
             new PostingRequest(
-                "DEPOSIT",
+                "TEST_SEED",
                 "USER",
                 client.id().toString(),
-                "deposit:rzp:test-" + java.util.UUID.randomUUID(),
+                "seed:test-" + java.util.UUID.randomUUID(),
                 "Test deposit",
                 List.of(
                     new Leg(externalBank.id(), -1_000_000),

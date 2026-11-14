@@ -5,6 +5,7 @@ import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.Authz;
 import com.svatsa.escrow.common.DomainException;
 import com.svatsa.escrow.common.Role;
+import com.svatsa.escrow.ledger.LedgerKeys;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.Leg;
 import com.svatsa.escrow.ledger.PostingRequest;
@@ -123,10 +124,10 @@ public class PayoutService {
             // B holds PAYOUT_IN_FLIGHT and waits on wallet(FOR UPDATE). Found by chaos C2.
             // INSUFFICIENT_FUNDS propagates and rolls back the whole transaction.
             ledgerService.post(new PostingRequest(
-                "PAYOUT_RESERVE",
+                LedgerKeys.PAYOUT_RESERVE,
                 "PAYOUT",
                 payoutId.toString(),
-                "payout:reserve:" + payoutId,
+                LedgerKeys.payoutReserve(payoutId),
                 "Reserve funds for payout",
                 List.of(
                     new Leg(walletAccountId, -amountPaise),
@@ -204,10 +205,10 @@ public class PayoutService {
                 return false;
             }
             ledgerService.post(new PostingRequest(
-                "PAYOUT_CONFIRM",
+                LedgerKeys.PAYOUT_CONFIRM,
                 "PAYOUT",
                 payout.id().toString(),
-                "payout:confirm:" + payout.id(),
+                LedgerKeys.payoutConfirm(payout.id()),
                 "Confirm payout to external bank",
                 List.of(
                     new Leg(accountId("PAYOUT_IN_FLIGHT"), -payout.amountPaise()),
@@ -235,10 +236,10 @@ public class PayoutService {
             }
             boolean cancelled = target == PayoutState.CANCELLED;
             ledgerService.post(new PostingRequest(
-                cancelled ? "PAYOUT_CANCEL" : "PAYOUT_REVERSE",
+                cancelled ? LedgerKeys.PAYOUT_CANCEL : LedgerKeys.PAYOUT_REVERSE,
                 "PAYOUT",
                 payout.id().toString(),
-                "payout:reverse:" + payout.id(),
+                LedgerKeys.payoutReverse(payout.id()),
                 cancelled ? "Cancel payout" : "Reverse failed payout",
                 List.of(
                     new Leg(accountId("PAYOUT_IN_FLIGHT"), -payout.amountPaise()),

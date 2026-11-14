@@ -55,7 +55,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
         walletId = accountRepository.create("FREELANCER_WALLET:" + freelancerId, AccountType.FREELANCER_WALLET,
             freelancerId, false).id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "TEST_SEED", "payout-it",
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "TEST_SEED", "payout-it",
             "payout-seed:" + freelancerId, "seed", List.of(new Leg(bank, -500_000), new Leg(walletId, 500_000)))));
     }
 

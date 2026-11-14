@@ -86,10 +86,10 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         // Inside a transaction: LedgerService.post requires one (propagation MANDATORY).
         seedTx.executeWithoutResult(status -> ledgerService.post(
             new com.svatsa.escrow.ledger.PostingRequest(
-                "DEPOSIT",
+                "TEST_SEED",
                 "USER",
                 client.id().toString(),
-                "deposit:rzp:test-" + java.util.UUID.randomUUID(),
+                "seed:test-" + java.util.UUID.randomUUID(),
                 "Setup deposit",
                 List.of(
                     new com.svatsa.escrow.ledger.Leg(externalBank.id(), -1_000_000),

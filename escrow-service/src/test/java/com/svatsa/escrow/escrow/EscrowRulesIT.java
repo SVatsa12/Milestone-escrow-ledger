@@ -106,8 +106,8 @@ class EscrowRulesIT extends AbstractIntegrationTest {
     private void deposit(long amount) {
         long wallet = accountRepository.findByCode("CLIENT_WALLET:" + client.id()).orElseThrow().id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
-            "deposit:rzp:test-" + UUID.randomUUID(), "seed", List.of(new Leg(bank, -amount), new Leg(wallet, amount)))));
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "USER", client.id().toString(),
+            "seed:test-" + UUID.randomUUID(), "seed", List.of(new Leg(bank, -amount), new Leg(wallet, amount)))));
     }
 
     private Project fundedProject(long amount) {

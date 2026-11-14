@@ -130,10 +130,10 @@ public class AutoReleaseJob {
             }
 
             try {
-                // Release it using the same key as manual approval
-                // The idempotency key ensures only one entry if retried
-                String idempotencyKey = "release:milestone:" + milestoneId;
-                escrowService.approveMilestone(Actor.SYSTEM, milestoneId, idempotencyKey);
+                // Release it exactly like a manual approval. approveMilestone posts with
+                // release:milestone:{id}, so a job retry or a racing client approve can never
+                // post a second release.
+                escrowService.approveMilestone(Actor.SYSTEM, milestoneId, "auto-release:" + milestoneId);
 
                 log.debug("Auto-released milestone {}", milestoneId);
                 meterRegistry.counter("escrow.auto_release.released").increment();

@@ -205,7 +205,7 @@ class TransferApiIT extends AbstractIntegrationTest {
         Account acc = accountRepository.create("TAPI:" + name + ":" + run, AccountType.CLIENT_WALLET, null, false);
         if (amount > 0) {
             long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
-            tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "TEST_SEED", acc.code(),
+            tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("TEST_SEED", "TEST_SEED", acc.code(),
                 "tapi-seed:" + acc.code(), "seed", List.of(new Leg(bank, -amount), new Leg(acc.id(), amount)))));
         }
         return acc;

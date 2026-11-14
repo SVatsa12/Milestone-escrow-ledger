@@ -67,7 +67,7 @@ class ErrorMappingIT extends AbstractToxiproxyIT {
         long wallet = accountRepository.findByCode(walletCode).orElseThrow().id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
-            "DEPOSIT", "TEST_SEED", walletCode, "err-seed:" + UUID.randomUUID(), "seed",
+            "TEST_SEED", "TEST_SEED", walletCode, "err-seed:" + UUID.randomUUID(), "seed",
             List.of(new Leg(bank, -amount), new Leg(wallet, amount)))));
     }
 }

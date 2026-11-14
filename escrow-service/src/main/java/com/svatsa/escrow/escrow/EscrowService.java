@@ -7,6 +7,7 @@ import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.Leg;
+import com.svatsa.escrow.ledger.LedgerKeys;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.PostingRequest;
 import com.svatsa.escrow.outbox.OutboxWriter;
@@ -22,7 +23,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Service for escrow operations: project creation, funding, submission, approval, release, and cancellation.
  * Every money-moving operation is one @Transactional method.
  * AGENTS.md invariants enforced:
- * - Idempotency keys prevent double-spending (via ledger's built-in idempotency_key)
+ * - Each flow posts with its business key from {@link LedgerKeys} (fund:project:{id},
+ *   release:milestone:{id}, refund:milestone:{id}), so one business action is one journal entry
+ *   even if every state guard were bypassed (invariant 8). The caller's HTTP Idempotency-Key
+ *   ({@code requestKey}) is only for replaying API responses and never reaches the ledger.
  * - State transitions via conditional UPDATE ... WHERE state = ?
  * - Fee calculation: fee = amount * feeBps / 10_000 (integer floor)
  * - All amounts in paise (long), never double/float
@@ -132,7 +136,7 @@ public class EscrowService {
      * Journal entry with idempotency_key = "fund:project:{projectId}"
      */
     @Transactional(rollbackFor = Exception.class)
-    public void fundProject(Actor actor, Long projectId, String idempotencyKey) {
+    public void fundProject(Actor actor, Long projectId, String requestKey) {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new IllegalArgumentException("Project not found: " + projectId));
         Authz.require(actor.is(Role.CLIENT, project.clientId()), actor, "fund project " + projectId);
@@ -157,10 +161,10 @@ public class EscrowService {
 
         long entryId = ledgerService.post(
             new PostingRequest(
-                "TRANSFER",
+                LedgerKeys.FUND,
                 "PROJECT",
                 projectId.toString(),
-                idempotencyKey,
+                LedgerKeys.fund(projectId),
                 "Fund project " + projectId,
                 List.of(
                     new Leg(clientWallet.id(), -totalAmount),
@@ -207,7 +211,7 @@ public class EscrowService {
      * Simple state transition, no money movement.
      */
     @Transactional(rollbackFor = Exception.class)
-    public void submitMilestone(Actor actor, Long milestoneId, String idempotencyKey) {
+    public void submitMilestone(Actor actor, Long milestoneId, String requestKey) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
         Project project = projectRepository.findById(milestone.projectId())
@@ -269,7 +273,7 @@ public class EscrowService {
      * where fee = A * feeBps / 10_000 (integer floor division)
      */
     @Transactional(rollbackFor = Exception.class)
-    public void approveMilestone(Actor actor, Long milestoneId, String idempotencyKey) {
+    public void approveMilestone(Actor actor, Long milestoneId, String requestKey) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
         Project project = projectRepository.findById(milestone.projectId())
@@ -326,10 +330,10 @@ public class EscrowService {
         // Create 3-leg journal entry: ESCROW -> FREELANCER_WALLET + PLATFORM_FEES
         long entryId = ledgerService.post(
             new PostingRequest(
-                "TRANSFER",
+                LedgerKeys.RELEASE,
                 "MILESTONE",
                 milestoneId.toString(),
-                idempotencyKey,
+                LedgerKeys.release(milestoneId),
                 "Release milestone " + milestoneId,
                 List.of(
                     new Leg(escrowAccount.id(), -milestone.amountPaise()),
@@ -401,7 +405,7 @@ public class EscrowService {
      * Money flow (if FUNDED): ESCROW -> CLIENT_WALLET
      */
     @Transactional(rollbackFor = Exception.class)
-    public void cancelMilestone(Actor actor, Long milestoneId, String idempotencyKey, Duration gracePeriod) {
+    public void cancelMilestone(Actor actor, Long milestoneId, String requestKey, Duration gracePeriod) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
         Project project = projectRepository.findById(milestone.projectId())
@@ -462,10 +466,10 @@ public class EscrowService {
 
             long entryId = ledgerService.post(
                 new PostingRequest(
-                    "TRANSFER",
+                    LedgerKeys.REFUND,
                     "MILESTONE",
                     milestoneId.toString(),
-                    idempotencyKey,
+                    LedgerKeys.refund(milestoneId),
                     "Refund milestone " + milestoneId,
                     List.of(
                         new Leg(escrowAccount.id(), -milestone.amountPaise()),

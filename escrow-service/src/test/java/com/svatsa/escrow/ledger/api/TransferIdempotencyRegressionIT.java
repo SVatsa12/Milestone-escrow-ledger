@@ -103,7 +103,7 @@ class TransferIdempotencyRegressionIT extends AbstractToxiproxyIT {
         if (amount > 0) {
             long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
             tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
-                "DEPOSIT", "TEST_SEED", String.valueOf(id), "reg-seed:" + UUID.randomUUID(), "seed",
+                "TEST_SEED", "TEST_SEED", String.valueOf(id), "reg-seed:" + UUID.randomUUID(), "seed",
                 List.of(new Leg(bank, -amount), new Leg(id, amount)))));
         }
         return id;

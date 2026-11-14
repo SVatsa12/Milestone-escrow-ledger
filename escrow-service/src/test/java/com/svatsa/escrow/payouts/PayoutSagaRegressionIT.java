@@ -106,7 +106,7 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
             AccountType.FREELANCER_WALLET, freelancerId, false).id();
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
-            "DEPOSIT", "TEST_SEED", String.valueOf(walletId), "reg-seed:" + UUID.randomUUID(), "seed",
+            "TEST_SEED", "TEST_SEED", String.valueOf(walletId), "reg-seed:" + UUID.randomUUID(), "seed",
             List.of(new Leg(bank, -amount), new Leg(walletId, amount)))));
         return new long[]{freelancerId, walletId};
     }

@@ -13,6 +13,7 @@ import com.svatsa.escrow.escrow.Project;
 import com.svatsa.escrow.escrow.ProjectRepository;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.Leg;
+import com.svatsa.escrow.ledger.LedgerKeys;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.PostingRequest;
 import com.svatsa.escrow.outbox.OutboxWriter;
@@ -70,7 +71,7 @@ public class DisputeService {
         Actor actor,
         Long milestoneId,
         String reason,
-        String idempotencyKey
+        String requestKey
     ) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
@@ -116,10 +117,10 @@ public class DisputeService {
         // Post: ESCROW → DISPUTE_HOLD
         ledgerService.post(
             new PostingRequest(
-                "TRANSFER",
+                LedgerKeys.DISPUTE_FREEZE,
                 "MILESTONE",
                 milestoneId.toString(),
-                idempotencyKey,
+                LedgerKeys.disputeFreeze(milestoneId),
                 "Freeze dispute: " + reason,
                 List.of(
                     new Leg(escrowAccount.id(), -milestone.amountPaise()),
@@ -181,14 +182,16 @@ public class DisputeService {
         Long freelancerSharePaise,
         Long clientSharePaise,
         String resolutionNote,
-        String idempotencyKey
+        String requestKey
     ) {
         Authz.requireAdmin(actor, "resolve dispute " + disputeId);
         Dispute dispute = disputeRepository.findById(disputeId)
             .orElseThrow(() -> new IllegalArgumentException("Dispute not found: " + disputeId));
 
         if (!dispute.isOpen()) {
-            throw new IllegalStateException("Dispute is not open: " + disputeId);
+            // A second resolve is a state conflict (409), not a server error (it was a 500).
+            throw new com.svatsa.escrow.common.DomainException("INVALID_STATE_TRANSITION",
+                org.springframework.http.HttpStatus.CONFLICT, "Dispute is not open: " + disputeId);
         }
 
         Milestone milestone = milestoneRepository.findById(dispute.milestoneId())
@@ -260,10 +263,10 @@ public class DisputeService {
         // Post: DISPUTE_HOLD split
         long entryId = ledgerService.post(
             new PostingRequest(
-                "TRANSFER",
+                LedgerKeys.DISPUTE_RESOLVE,
                 "DISPUTE",
                 disputeId.toString(),
-                idempotencyKey,
+                LedgerKeys.disputeResolve(disputeId),
                 "Resolve dispute: " + resolutionNote,
                 legs
             )

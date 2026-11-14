@@ -67,7 +67,7 @@ class LedgerPropertyIT extends AbstractIntegrationTest {
             wallets.add(id);
             model.put(id, 0L);
             long seed = 1_000 + (long) (i * 7_919 % 9_000);
-            apply(new PostingRequest("DEPOSIT", "TEST", run, "prop-seed:" + run + ":" + i, "seed",
+            apply(new PostingRequest("TEST_SEED", "TEST", run, "prop-seed:" + run + ":" + i, "seed",
                 List.of(new Leg(bank, -seed), new Leg(id, seed))), model, appliedKeys);
         }
 
@@ -80,7 +80,7 @@ class LedgerPropertyIT extends AbstractIntegrationTest {
                 req = sent.get(Math.floorMod(op.replayPick(), sent.size()));
             } else if (op.kind().equals("deposit")) {
                 long to = wallets.get(Math.floorMod(op.a(), WALLETS));
-                req = new PostingRequest("DEPOSIT", "TEST", run, "prop:" + run + ":" + n, "deposit",
+                req = new PostingRequest("TEST_SEED", "TEST", run, "prop:" + run + ":" + n, "deposit",
                     List.of(new Leg(bank, -op.amount()), new Leg(to, op.amount())));
             } else {
                 int fromIdx = Math.floorMod(op.a(), WALLETS);

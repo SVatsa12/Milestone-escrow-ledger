@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.InsufficientFundsException;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -52,8 +53,8 @@ class EscrowRulesIT extends AbstractIntegrationTest {
         deposit(100_000);
         Milestone m = submitted(fundedProject(50_000));
 
-        escrowService.approveMilestone(m.id(), "approve-1-" + m.id());
-        assertThatThrownBy(() -> escrowService.approveMilestone(m.id(), "approve-2-" + m.id()))
+        escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-1-" + m.id());
+        assertThatThrownBy(() -> escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-2-" + m.id()))
             .isInstanceOf(InvalidStateTransitionException.class);
 
         assertThat(jdbcClient.sql("SELECT COUNT(*) FROM journal_entries WHERE reference_type = 'MILESTONE' AND reference_id = ?")
@@ -66,10 +67,10 @@ class EscrowRulesIT extends AbstractIntegrationTest {
     @DisplayName("funding with too little in the wallet changes nothing; milestones stay DRAFT")
     void fundingWithInsufficientFundsChangesNothing() {
         deposit(10_000);
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "too-big", Duration.ofDays(5),
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "too-big", Duration.ofDays(5),
             List.of(new EscrowService.MilestoneSpec("m1", 50_000, Instant.now().plus(Duration.ofDays(30)))));
 
-        assertThatThrownBy(() -> escrowService.fundProject(project.id(), "fund-" + project.id()))
+        assertThatThrownBy(() -> escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + project.id()))
             .isInstanceOf(InsufficientFundsException.class);
 
         assertThat(milestoneRepository.findByProjectId(project.id()))
@@ -83,17 +84,17 @@ class EscrowRulesIT extends AbstractIntegrationTest {
     void cancelIsRefusedUntilTheGracePeriodEndsThenRefunds() {
         deposit(100_000);
         Instant due = clock.instant().plus(Duration.ofDays(2));
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "late", Duration.ofDays(5),
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "late", Duration.ofDays(5),
             List.of(new EscrowService.MilestoneSpec("m1", 40_000, due)));
-        escrowService.fundProject(project.id(), "fund-" + project.id());
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + project.id());
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
 
-        assertThatThrownBy(() -> escrowService.cancelMilestone(m.id(), "cancel-1-" + m.id(), GRACE))
+        assertThatThrownBy(() -> escrowService.cancelMilestone(clientOfMilestone(m.id()), m.id(), "cancel-1-" + m.id(), GRACE))
             .isInstanceOf(CancelTooEarlyException.class);
         assertThat(state(m)).isEqualTo(MilestoneState.FUNDED);
 
         clock.advance(Duration.ofDays(2).plus(GRACE).plusSeconds(1));
-        escrowService.cancelMilestone(m.id(), "cancel-2-" + m.id(), GRACE);
+        escrowService.cancelMilestone(clientOfMilestone(m.id()), m.id(), "cancel-2-" + m.id(), GRACE);
 
         assertThat(state(m)).isEqualTo(MilestoneState.REFUNDED);
         assertThat(accountRepository.findById(project.escrowAccountId()).orElseThrow().balance()).isZero();
@@ -110,15 +111,15 @@ class EscrowRulesIT extends AbstractIntegrationTest {
     }
 
     private Project fundedProject(long amount) {
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "rules", Duration.ofDays(5),
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "rules", Duration.ofDays(5),
             List.of(new EscrowService.MilestoneSpec("m1", amount, Instant.now().plus(Duration.ofDays(30)))));
-        escrowService.fundProject(project.id(), "fund-" + project.id());
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + project.id());
         return project;
     }
 
     private Milestone submitted(Project project) {
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + m.id());
         return m;
     }
 

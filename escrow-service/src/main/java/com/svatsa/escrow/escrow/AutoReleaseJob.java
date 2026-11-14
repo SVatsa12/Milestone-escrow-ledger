@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.SqlTime;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
@@ -132,7 +133,7 @@ public class AutoReleaseJob {
                 // Release it using the same key as manual approval
                 // The idempotency key ensures only one entry if retried
                 String idempotencyKey = "release:milestone:" + milestoneId;
-                escrowService.approveMilestone(milestoneId, idempotencyKey);
+                escrowService.approveMilestone(Actor.SYSTEM, milestoneId, idempotencyKey);
 
                 log.debug("Auto-released milestone {}", milestoneId);
                 meterRegistry.counter("escrow.auto_release.released").increment();

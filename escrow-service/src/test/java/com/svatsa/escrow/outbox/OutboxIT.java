@@ -1,5 +1,6 @@
 package com.svatsa.escrow.outbox;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.escrow.EscrowService;
 import com.svatsa.escrow.escrow.InvalidStateTransitionException;
 import com.svatsa.escrow.escrow.Milestone;
@@ -52,7 +53,7 @@ class OutboxIT extends AbstractIntegrationTest {
     @DisplayName("approving a milestone publishes MilestoneApproved, MilestoneReleased and LedgerEntryPosted")
     void approveEventsReachKafka() {
         Milestone m = submittedMilestone();
-        escrowService.approveMilestone(m.id(), "approve-" + m.id());
+        escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-" + m.id());
 
         List<String> eventIds = jdbcClient.sql("""
                 SELECT event_id::text FROM outbox
@@ -73,11 +74,11 @@ class OutboxIT extends AbstractIntegrationTest {
     void rolledBackOperationWritesNoOutboxRow() {
         Milestone m = submittedMilestone();
         long before = outboxRowsFor(m);
-        escrowService.approveMilestone(m.id(), "approve-" + m.id());
+        escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-" + m.id());
         long afterApprove = outboxRowsFor(m);
 
         // The milestone is RELEASED now; approving again is a state conflict and rolls back.
-        assertThatThrownBy(() -> escrowService.approveMilestone(m.id(), "approve-again-" + m.id()))
+        assertThatThrownBy(() -> escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-again-" + m.id()))
             .isInstanceOf(InvalidStateTransitionException.class);
 
         assertThat(afterApprove).isGreaterThan(before);
@@ -94,7 +95,7 @@ class OutboxIT extends AbstractIntegrationTest {
         pauseKafka();
         try {
             for (long id : milestones) {
-                escrowService.approveMilestone(id, "approve-" + id);   // must not fail
+                escrowService.approveMilestone(clientOfMilestone(id), id, "approve-" + id);   // must not fail
             }
             long pending = jdbcClient.sql("SELECT COUNT(*) FROM outbox WHERE published_at IS NULL")
                 .query(Long.class).single();
@@ -118,11 +119,11 @@ class OutboxIT extends AbstractIntegrationTest {
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
             "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -10_000), new Leg(wallet, 10_000)))));
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "outbox-" + run,
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "outbox-" + run,
             Duration.ofDays(5), List.of(new EscrowService.MilestoneSpec("m1", 5_000, Instant.now().plus(Duration.ofDays(30)))));
-        escrowService.fundProject(project.id(), "fund-" + run);
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + run);
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m.id(), "submit-" + run);
+        escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + run);
         return m;
     }
 

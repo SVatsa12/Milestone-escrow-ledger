@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.Actor;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -60,7 +61,7 @@ public class EscrowController {
      * POST /api/escrow/projects
      */
     @PostMapping("/projects")
-    public ResponseEntity<Project> createProject(@RequestBody CreateProjectRequest request) {
+    public ResponseEntity<Project> createProject(Actor actor, @RequestBody CreateProjectRequest request) {
         if (request.clientId() == null || request.freelancerId() == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -77,6 +78,7 @@ public class EscrowController {
             .toList();
 
         Project project = escrowService.createProject(
+            actor,
             request.clientId(),
             request.freelancerId(),
             request.title(),
@@ -93,6 +95,7 @@ public class EscrowController {
      */
     @PostMapping("/projects/{projectId}/fund")
     public ResponseEntity<Void> fundProject(
+        Actor actor,
         @PathVariable Long projectId,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
@@ -100,7 +103,7 @@ public class EscrowController {
             return ResponseEntity.badRequest().build();
         }
 
-        escrowService.fundProject(projectId, idempotencyKey);
+        escrowService.fundProject(actor, projectId, idempotencyKey);
         return ResponseEntity.ok().build();
     }
 
@@ -110,6 +113,7 @@ public class EscrowController {
      */
     @PostMapping("/milestones/{milestoneId}/submit")
     public ResponseEntity<Void> submitMilestone(
+        Actor actor,
         @PathVariable Long milestoneId,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
@@ -117,7 +121,7 @@ public class EscrowController {
             return ResponseEntity.badRequest().build();
         }
 
-        escrowService.submitMilestone(milestoneId, idempotencyKey);
+        escrowService.submitMilestone(actor, milestoneId, idempotencyKey);
         return ResponseEntity.ok().build();
     }
 
@@ -128,6 +132,7 @@ public class EscrowController {
      */
     @PostMapping("/milestones/{milestoneId}/approve")
     public ResponseEntity<Void> approveMilestone(
+        Actor actor,
         @PathVariable Long milestoneId,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
@@ -135,7 +140,7 @@ public class EscrowController {
             return ResponseEntity.badRequest().build();
         }
 
-        escrowService.approveMilestone(milestoneId, idempotencyKey);
+        escrowService.approveMilestone(actor, milestoneId, idempotencyKey);
         return ResponseEntity.ok().build();
     }
 
@@ -145,6 +150,7 @@ public class EscrowController {
      */
     @PostMapping("/milestones/{milestoneId}/cancel")
     public ResponseEntity<Void> cancelMilestone(
+        Actor actor,
         @PathVariable Long milestoneId,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
@@ -154,7 +160,7 @@ public class EscrowController {
 
         // Grace period: 7 days after due date
         Duration gracePeriod = Duration.ofDays(7);
-        escrowService.cancelMilestone(milestoneId, idempotencyKey, gracePeriod);
+        escrowService.cancelMilestone(actor, milestoneId, idempotencyKey, gracePeriod);
         return ResponseEntity.ok().build();
     }
 

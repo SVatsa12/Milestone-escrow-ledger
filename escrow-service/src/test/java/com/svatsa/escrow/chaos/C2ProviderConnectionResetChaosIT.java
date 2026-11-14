@@ -1,5 +1,6 @@
 package com.svatsa.escrow.chaos;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -102,7 +103,7 @@ class C2ProviderConnectionResetChaosIT extends AbstractChaosIT {
                 final int n = i;
                 futures.add(pool.submit(() -> {
                     try {
-                        Payout p = payoutService.requestPayout(freelancerId, walletId, amountList.get(n), "c2-" + n);
+                        Payout p = payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletId, amountList.get(n), "c2-" + n);
                         payoutIds.add(p.id());
                     } catch (RuntimeException e) {
                         requestErrors.add("payout " + n + ": " + e);

@@ -135,6 +135,8 @@ class TransferApiIT extends AbstractIntegrationTest {
         long razorpayBefore = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().balance();
 
         mockMvc.perform(post("/api/v1/admin/deposits/simulate")
+                .header("X-Actor-Id", "1")
+                .header("X-Actor-Role", "ADMIN")
                 .header("Idempotency-Key", key("deposit"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"clientAccountId\":" + b.id() + ",\"amountPaise\":5000}"))

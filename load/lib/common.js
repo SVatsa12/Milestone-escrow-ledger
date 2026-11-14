@@ -5,7 +5,14 @@ export const BASE = __ENV.BASE_URL || 'http://localhost:8080';
 export const RESULTS_DIR = __ENV.RESULTS_DIR || 'load/results';
 export const LABEL = __ENV.LABEL || 'default';
 
-export const ADMIN = { 'X-Actor-Id': '1', 'X-Actor-Role': 'ADMIN' };
+// Every escrow, dispute, deposit, payout and admin call needs actor headers (missing -> 401,
+// wrong person or role -> 403). Clients fund/approve/cancel their own projects, freelancers
+// submit their own milestones and pay out from their own wallet, admin endpoints need ADMIN.
+export function actor(id, role) {
+  return { 'X-Actor-Id': `${id}`, 'X-Actor-Role': role };
+}
+
+export const ADMIN = actor(1, 'ADMIN');
 
 // 409 (state conflict) and 422 (insufficient funds) are correct business answers under
 // load, not failures. Everything else outside 2xx counts toward http_req_failed.

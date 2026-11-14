@@ -83,7 +83,7 @@ class LoadPathApiIT extends AbstractToxiproxyIT {
         expect(post("/api/escrow/milestones/999999999/approve", "appr3-" + run, actor(client, "CLIENT"), ""), 404);
 
         expect(get("/api/v1/accounts/" + freelancerWallet), 200);
-        JsonNode invariants = expect(get("/api/v1/admin/invariants"), 200);
+        JsonNode invariants = expect(get("/api/v1/admin/invariants", admin()), 200);
         assertThat(invariants.path("violations_count").asInt()).as(invariants.toString()).isZero();
 
         // Outbox -> Kafka -> audit consumer works (it used to crash-loop on deserialization).
@@ -120,9 +120,12 @@ class LoadPathApiIT extends AbstractToxiproxyIT {
         return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private HttpResponse<String> get(String path) throws Exception {
-        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + serverPort + path)).GET().build(),
-            HttpResponse.BodyHandlers.ofString());
+    private HttpResponse<String> get(String path, String... headers) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + serverPort + path)).GET();
+        if (headers.length > 0) {
+            b.headers(headers);
+        }
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private JsonNode expect(HttpResponse<String> response, int status) throws Exception {

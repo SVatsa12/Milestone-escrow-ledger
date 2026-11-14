@@ -3,7 +3,7 @@
 // DURATION_SEC and ACK_LOG to record every acknowledged Idempotency-Key.
 import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
-import { BASE, ADMIN, jsonHeaders, newKey, pick, randInt, baseThresholds, summarize, SUMMARY_TREND_STATS } from './lib/common.js';
+import { BASE, ADMIN, actor, jsonHeaders, newKey, pick, randInt, baseThresholds, summarize, SUMMARY_TREND_STATS } from './lib/common.js';
 import { setupData } from './lib/setup.js';
 
 const RATE = parseInt(__ENV.RATE || '150', 10);
@@ -69,7 +69,7 @@ function approve(data) {
   const p = pick(data.projects);
   const key = newKey('mx-ap');
   const res = http.post(`${BASE}/api/escrow/milestones/${pick(p.milestoneIds)}/approve`, null,
-    Object.assign(jsonHeaders({ 'X-Actor-Id': `${p.clientId}`, 'X-Actor-Role': 'CLIENT' }, key), { tags: { name: 'approve' } }));
+    Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'approve' } }));
   ack('approve', key, res);
 }
 
@@ -78,7 +78,7 @@ function dispute(data) {
   const key = newKey('mx-ds');
   const res = http.post(`${BASE}/api/escrow/disputes`,
     JSON.stringify({ milestoneId: pick(p.milestoneIds), reason: 'k6' }),
-    Object.assign(jsonHeaders({ 'X-Actor-Id': `${p.clientId}`, 'X-Actor-Role': 'CLIENT' }, key), { tags: { name: 'dispute' } }));
+    Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'dispute' } }));
   ack('dispute', key, res);
 }
 
@@ -87,7 +87,7 @@ function payout(data) {
   const key = newKey('mx-po');
   // Freelancer wallets fill up only as milestones are approved, so early payouts get 422.
   const res = http.post(`${BASE}/api/v1/payouts`, JSON.stringify({ amountPaise: randInt(100, 2000) }),
-    Object.assign(jsonHeaders({ 'X-Actor-Id': `${f.userId}`, 'X-Actor-Role': 'FREELANCER' }, key), { tags: { name: 'payout' } }));
+    Object.assign(jsonHeaders(actor(f.userId, 'FREELANCER'), key), { tags: { name: 'payout' } }));
   if (res.status === 422) insufficientFunds.add(1);
   ack('payout', key, res);
 }

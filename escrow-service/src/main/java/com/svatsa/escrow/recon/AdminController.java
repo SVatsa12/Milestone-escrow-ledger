@@ -1,5 +1,7 @@
 package com.svatsa.escrow.recon;
 
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -16,8 +18,8 @@ import java.util.UUID;
 /**
  * Admin endpoints for reconciliation and invariant checking.
  *
- * Requires: X-Actor-Role: ADMIN header
- * All endpoints are under /api/v1/admin/
+ * ADMIN only: every endpoint takes the {@link Actor} and answers 403 FORBIDDEN to anyone else
+ * (401 UNAUTHENTICATED without actor headers). All endpoints are under /api/v1/admin/
  */
 @RestController
 @RequestMapping("/api/v1/admin")
@@ -47,7 +49,8 @@ public class AdminController {
      * Run invariant checks and return any violations.
      */
     @GetMapping("/invariants")
-    public ResponseEntity<?> getInvariants() {
+    public ResponseEntity<?> getInvariants(Actor actor) {
+        Authz.requireAdmin(actor, "read invariants");
         try {
             List<Violation> violations = invariantChecker.check();
             Map<String, Object> response = new HashMap<>();
@@ -69,8 +72,10 @@ public class AdminController {
      */
     @PostMapping("/recon/run")
     public ResponseEntity<?> triggerReconRun(
+        Actor actor,
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
     ) {
+        Authz.requireAdmin(actor, "run reconciliation");
         try {
             log.info("Admin triggered reconciliation for date={}", date);
             reconScheduler.runManual(date);
@@ -93,8 +98,10 @@ public class AdminController {
      */
     @GetMapping("/recon/runs")
     public ResponseEntity<?> getReconRuns(
+        Actor actor,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
     ) {
+        Authz.requireAdmin(actor, "read reconciliation runs");
         try {
             LocalDate queryDate = (date != null) ? date : LocalDate.now();
             List<ReconRun> runs = reconRepo.findRunsByDate(queryDate);
@@ -130,7 +137,8 @@ public class AdminController {
      * Get all mismatches for a specific reconciliation run.
      */
     @GetMapping("/recon/runs/{id}/mismatches")
-    public ResponseEntity<?> getReconMismatches(@PathVariable UUID id) {
+    public ResponseEntity<?> getReconMismatches(Actor actor, @PathVariable UUID id) {
+        Authz.requireAdmin(actor, "read reconciliation mismatches");
         try {
             var run = reconRepo.findRunById(id).orElseThrow(() ->
                 new IllegalArgumentException("Recon run not found: " + id)

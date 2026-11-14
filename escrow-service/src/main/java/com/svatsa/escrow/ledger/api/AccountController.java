@@ -1,5 +1,7 @@
 package com.svatsa.escrow.ledger.api;
 
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import com.svatsa.escrow.common.ValidationException;
 import com.svatsa.escrow.idempotency.IdempotencyService;
 import com.svatsa.escrow.ledger.Account;
@@ -148,13 +150,15 @@ public class AccountController {
     }
 
     /**
-     * Simulate a deposit (for dev/testing only, idempotent).
+     * Simulate a deposit (for dev/testing only, idempotent). ADMIN only.
      */
     @PostMapping("/admin/deposits/simulate")
     public ResponseEntity<Map<String, Object>> simulateDeposit(
+        Actor actor,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody SimulateDepositRequest request
     ) {
+        Authz.requireAdmin(actor, "simulate a deposit");
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ValidationException("Idempotency-Key header is required");
         }

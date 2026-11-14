@@ -1,5 +1,6 @@
 package com.svatsa.escrow.payouts;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.chaos.AbstractToxiproxyIT;
 import com.svatsa.escrow.chaos.FakePayoutProvider;
 import com.svatsa.escrow.ledger.AccountRepository;
@@ -47,7 +48,7 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
             .param(key).query(String.class).optional().ifPresent(stateSeenByProvider::set));
 
         long[] wallet = fundedWallet(10_000);
-        Payout payout = payoutService.requestPayout(wallet[0], wallet[1], 1_000, "reg-t1-" + UUID.randomUUID());
+        Payout payout = payoutService.requestPayout(Actors.freelancer(wallet[0]), wallet[0], wallet[1], 1_000, "reg-t1-" + UUID.randomUUID());
 
         assertThat(stateSeenByProvider.get())
             .as("a crash after the provider call must not be able to lose the reservation")
@@ -61,7 +62,7 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
         PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
         long[] wallet = fundedWallet(10_000);
 
-        Payout payout = payoutService.requestPayout(wallet[0], wallet[1], 2_500, "reg-key-" + UUID.randomUUID());
+        Payout payout = payoutService.requestPayout(Actors.freelancer(wallet[0]), wallet[0], wallet[1], 2_500, "reg-key-" + UUID.randomUUID());
 
         // The fake answers 400 without the header, which used to turn every payout into FAILED.
         assertThat(PROVIDER.records()).containsKey(payout.id().toString());
@@ -83,7 +84,7 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
                 final int n = i;
                 futures.add(pool.submit(() -> {
                     try {
-                        payoutService.requestPayout(wallet[0], wallet[1], 100, "reg-dl-" + n + "-" + wallet[1]);
+                        payoutService.requestPayout(Actors.freelancer(wallet[0]), wallet[0], wallet[1], 100, "reg-dl-" + n + "-" + wallet[1]);
                     } catch (Throwable t) {
                         errors.add(t);
                     }

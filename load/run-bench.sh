@@ -92,7 +92,7 @@ k6_run() { # script label [extra -e args...]
     -e BASE_URL="$BASE_URL" -e RESULTS_DIR=/load/results -e LABEL="$label" "$@" \
     --summary-export "/load/results/$name-$label.summary.json" \
     "/load/$script" || echo "   (k6 exited non-zero: a threshold failed; results are still recorded)"
-  curl -s "$HOST_URL/api/v1/admin/invariants" > "$RESULTS/$name-$label.invariants.json" || true
+  curl -s -H "X-Actor-Id: 1" -H "X-Actor-Role: ADMIN" "$HOST_URL/api/v1/admin/invariants" > "$RESULTS/$name-$label.invariants.json" || true
   echo "   invariants: $(cat "$RESULTS/$name-$label.invariants.json")" | cut -c1-200
 }
 

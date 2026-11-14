@@ -5,7 +5,7 @@
 // Sizes can be shrunk for smoke runs with CLIENTS / FREELANCERS / PROJECTS env vars.
 import http from 'k6/http';
 import { fail } from 'k6';
-import { BASE, ADMIN, jsonHeaders, newKey } from './common.js';
+import { BASE, ADMIN, actor, jsonHeaders, newKey } from './common.js';
 
 const CLIENTS = parseInt(__ENV.CLIENTS || '500', 10);
 const FREELANCERS = parseInt(__ENV.FREELANCERS || '50', 10);
@@ -35,11 +35,11 @@ export function setupData() {
     title: `load-${run}-${i}`,
     reviewWindow: 'P5D',
     milestones: [10000, 20000, 30000].map((amt, m) => ({ title: `m${m + 1}`, amountPaise: amt + (i % 100) * 100, dueAt: due })),
-  }), jsonHeaders({ 'X-Actor-Id': `${s.client.userId}`, 'X-Actor-Role': 'CLIENT' })]), 201, 'create project');
+  }), jsonHeaders(actor(s.client.userId, 'CLIENT'))]), 201, 'create project');
   const projectIds = created.map((r) => r.json('id'));
 
   batch(projectIds.map((id, i) => ['POST', `${BASE}/api/escrow/projects/${id}/fund`, null,
-    jsonHeaders({ 'X-Actor-Id': `${specs[i].client.userId}`, 'X-Actor-Role': 'CLIENT' }, `setup-fund-${run}-${id}`)]),
+    jsonHeaders(actor(specs[i].client.userId, 'CLIENT'), `setup-fund-${run}-${id}`)]),
     200, 'fund project');
 
   const details = batch(projectIds.map((id) => ['GET', `${BASE}/api/escrow/projects/${id}`, null, {}]), 200, 'get project');
@@ -53,7 +53,7 @@ export function setupData() {
   const submits = [];
   projects.forEach((p) => p.milestoneIds.forEach((mid) => submits.push(['POST',
     `${BASE}/api/escrow/milestones/${mid}/submit`, null,
-    jsonHeaders({ 'X-Actor-Id': `${p.freelancerId}`, 'X-Actor-Role': 'FREELANCER' }, `setup-sub-${run}-${mid}`)])));
+    jsonHeaders(actor(p.freelancerId, 'FREELANCER'), `setup-sub-${run}-${mid}`)])));
   batch(submits, 200, 'submit milestone');
 
   return { clients, freelancers, projects };

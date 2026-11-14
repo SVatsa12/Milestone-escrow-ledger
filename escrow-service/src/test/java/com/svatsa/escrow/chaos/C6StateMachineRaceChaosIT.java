@@ -106,7 +106,7 @@ class C6StateMachineRaceChaosIT extends AbstractIntegrationTest {
                 try {
                     startGate.await();
                     try {
-                        // escrowService.approveMilestone(milestoneId, CLIENT_ID)
+                        // escrowService.approveMilestone(clientOfMilestone(milestoneId), milestoneId, CLIENT_ID)
                         releasedCount.incrementAndGet();
                     } catch (Exception e) {
                         // Expected if another operation wins the race

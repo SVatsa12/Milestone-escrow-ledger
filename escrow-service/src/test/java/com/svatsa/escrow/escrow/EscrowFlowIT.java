@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.common.Money;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
@@ -109,7 +110,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         );
 
         Project project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Web App",
             Duration.ofDays(3),
@@ -126,7 +127,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
 
         // Fund project
         String fundKey = "fund:project:" + project.id();
-        escrowService.fundProject(project.id(), fundKey);
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), fundKey);
 
         // Verify all milestones transitioned to FUNDED
         List<Milestone> funded = milestoneRepository.findByProjectId(project.id());
@@ -140,7 +141,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         // Submit milestone 1
         Milestone m1 = funded.get(0);
         String submitKey = "submit:milestone:" + m1.id();
-        escrowService.submitMilestone(m1.id(), submitKey);
+        escrowService.submitMilestone(freelancerOfMilestone(m1.id()), m1.id(), submitKey);
         Milestone m1Submitted = milestoneRepository.findById(m1.id()).orElseThrow();
         assertThat(m1Submitted.state()).isEqualTo(MilestoneState.SUBMITTED);
 
@@ -149,7 +150,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         long freelancer1Payout = m1Amount - fee1;
 
         String approveKey = "approve:milestone:" + m1.id();
-        escrowService.approveMilestone(m1.id(), approveKey);
+        escrowService.approveMilestone(clientOfMilestone(m1.id()), m1.id(), approveKey);
 
         Milestone m1Released = milestoneRepository.findById(m1.id()).orElseThrow();
         assertThat(m1Released.state()).isEqualTo(MilestoneState.RELEASED);
@@ -186,7 +187,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         Instant dueDate = now.plusSeconds(3600); // 1 hour from now
 
         Project project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Test Project",
             Duration.ofDays(1),
@@ -194,7 +195,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         );
 
         // Fund
-        escrowService.fundProject(project.id(), "fund:project:" + project.id());
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund:project:" + project.id());
 
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
         assertThat(m.state()).isEqualTo(MilestoneState.FUNDED);
@@ -202,7 +203,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         // Try to cancel before grace period expires (7 days after due date)
         Duration gracePeriod = Duration.ofDays(7);
         assertThatThrownBy(() ->
-            escrowService.cancelMilestone(m.id(), "cancel:milestone:" + m.id(), gracePeriod)
+            escrowService.cancelMilestone(clientOfMilestone(m.id()), m.id(), "cancel:milestone:" + m.id(), gracePeriod)
         )
             .isInstanceOf(CancelTooEarlyException.class);
 
@@ -215,7 +216,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
     @DisplayName("DRAFT milestone can be cancelled immediately without grace period")
     void testCancelDraftImmediate() {
         Project project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Test Project",
             Duration.ofDays(1),
@@ -226,7 +227,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
         assertThat(m.state()).isEqualTo(MilestoneState.DRAFT);
 
         // Cancel DRAFT immediately
-        escrowService.cancelMilestone(m.id(), "cancel:milestone:" + m.id(), Duration.ofDays(7));
+        escrowService.cancelMilestone(clientOfMilestone(m.id()), m.id(), "cancel:milestone:" + m.id(), Duration.ofDays(7));
 
         Milestone cancelled = milestoneRepository.findById(m.id()).orElseThrow();
         assertThat(cancelled.state()).isEqualTo(MilestoneState.CANCELLED);
@@ -236,7 +237,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
     @DisplayName("invalid state transition: cannot submit a DRAFT milestone")
     void testInvalidStateTransition() {
         Project project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Test",
             Duration.ofDays(1),
@@ -247,7 +248,7 @@ class EscrowFlowIT extends AbstractIntegrationTest {
 
         // Cannot submit DRAFT directly
         assertThatThrownBy(() ->
-            escrowService.submitMilestone(m.id(), "submit:milestone:" + m.id())
+            escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit:milestone:" + m.id())
         )
             .isInstanceOf(InvalidStateTransitionException.class);
     }

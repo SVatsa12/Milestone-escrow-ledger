@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.SqlTime;
 import java.time.Instant;
 import java.util.List;
@@ -101,16 +102,26 @@ public class MilestoneRepository {
     }
 
     /**
-     * Transitions a milestone to a new state.
-     * Uses optimistic locking: only succeeds if version matches.
-     * Returns true if successful, false if version mismatch.
+     * Transitions a milestone to a new state and records it in milestone_transitions with the
+     * actor who caused it (AGENTS.md: both approve and release are written there).
+     * Conditional update: only succeeds if the milestone is still in {@code currentState} at
+     * {@code currentVersion}. Returns false (and records nothing) otherwise; the caller treats
+     * that as a conflict and rolls back.
+     *
+     * @param journalEntryId the entry that moved money for this transition, or null
      */
     public boolean transitionState(
         Long milestoneId,
         MilestoneState currentState,
         MilestoneState newState,
-        int currentVersion
+        int currentVersion,
+        Actor actor,
+        String reason,
+        Long journalEntryId
     ) {
+        if (!MilestoneStateMachine.isValidTransition(currentState, newState)) {
+            throw InvalidStateTransitionException.invalidTransition(currentState, newState);
+        }
         String stateField = switch (newState) {
             case SUBMITTED -> "submitted_at";
             case APPROVED -> "approved_at";
@@ -144,6 +155,51 @@ public class MilestoneRepository {
             .param(currentVersion)
             .update();
 
-        return rows > 0;
+        if (rows == 0) {
+            return false;
+        }
+
+        jdbc.sql("""
+            INSERT INTO milestone_transitions
+                (milestone_id, from_state, to_state, actor_id, actor_role, reason, journal_entry_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """)
+            .param(milestoneId)
+            .param(currentState.name())
+            .param(newState.name())
+            .param(actor.auditId())
+            .param(actor.role().name())
+            .param(reason)
+            .param(journalEntryId)
+            .update();
+        return true;
     }
+
+    /** The audit trail of one milestone, oldest first. */
+    public List<Transition> findTransitions(Long milestoneId) {
+        return jdbc.sql("""
+            SELECT from_state, to_state, actor_id, actor_role, reason, journal_entry_id
+            FROM milestone_transitions
+            WHERE milestone_id = ?
+            ORDER BY id
+            """)
+            .param(milestoneId)
+            .query((rs, n) -> new Transition(
+                MilestoneState.valueOf(rs.getString("from_state")),
+                MilestoneState.valueOf(rs.getString("to_state")),
+                (Long) rs.getObject("actor_id", Long.class),
+                rs.getString("actor_role"),
+                rs.getString("reason"),
+                (Long) rs.getObject("journal_entry_id", Long.class)))
+            .list();
+    }
+
+    public record Transition(
+        MilestoneState from,
+        MilestoneState to,
+        Long actorId,
+        String actorRole,
+        String reason,
+        Long journalEntryId
+    ) {}
 }

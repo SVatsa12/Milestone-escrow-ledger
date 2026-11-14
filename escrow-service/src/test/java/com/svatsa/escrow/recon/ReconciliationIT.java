@@ -1,5 +1,6 @@
 package com.svatsa.escrow.recon;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.payouts.Payout;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
@@ -143,7 +144,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
             "DEPOSIT", "TEST_SEED", "recon", "recon-seed:" + UUID.randomUUID(), "seed",
             java.util.List.of(new com.svatsa.escrow.ledger.Leg(bank, -amount),
                 new com.svatsa.escrow.ledger.Leg(walletAccountId, amount)))));
-        Payout payout = payoutService.requestPayout(freelancerId, walletAccountId, amount, "recon-" + UUID.randomUUID());
+        Payout payout = payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletAccountId, amount, "recon-" + UUID.randomUUID());
         assertThat(payout.state()).isEqualTo(PayoutState.CONFIRMED);
         return payout;
     }

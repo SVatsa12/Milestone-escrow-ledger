@@ -308,6 +308,35 @@ P6 specifies 422; the code threw `IllegalArgumentException` (400). **Fix:**
 `DomainException("VALIDATION_FAILED", 422)`.
 Regression: `DisputeRulesIT.splitThatDoesNotAddUpIs422`.
 
+## Closed P5-era gaps
+These were listed as open issues below; each is now closed with its own tests.
+
+### 36. No actor or role checks (P5) — closed
+- **Gap:** the escrow service took no actor at all, so anyone could fund, submit, approve or
+  cancel anyone's milestone. Disputes and payouts checked only the *role* header in the
+  controller (any client could dispute any milestone, any freelancer could submit on any
+  project), deposits trusted `X-Actor-Id`, admin endpoints and the simulated deposit were open,
+  and `milestone_transitions` was never written.
+- **Fix:** `common.Actor(id, role)` is resolved from `X-Actor-Id` / `X-Actor-Role` by
+  `ActorArgumentResolver`; missing or invalid headers are `401 UNAUTHENTICATED`, and a header
+  claiming `SYSTEM` is invalid (SYSTEM is built only in code, for auto-release). Every
+  `EscrowService`, `DisputeService`, `DepositService` and `PayoutService` entry point takes the
+  actor and checks it (`common.Authz`), so a wrong person or role is `403 FORBIDDEN` before
+  anything moves:
+  - create project: that client (or ADMIN); fund, approve, cancel: the project's client;
+    submit: the project's freelancer; approve also accepts SYSTEM (auto-release)
+  - open dispute: the project's client or freelancer; resolve: ADMIN
+  - deposit: the client themselves (`clientId` in the body may not name someone else)
+  - payout: the freelancer themselves, from `FREELANCER_WALLET:{id}` only
+  - `/api/v1/admin/**` and `/api/v1/admin/deposits/simulate`: ADMIN
+- Every milestone transition now inserts a `milestone_transitions` row with the actor's id and
+  role (NULL id for SYSTEM), a reason, and the journal entry that moved money, if any. Auto-release
+  is recorded as SYSTEM, and its `MilestoneReleased` event now says `autoReleased: true` (it was
+  hard-coded `false`).
+- **Regression:** `common/AuthorizationIT` (every endpoint: the right actor succeeds, each wrong
+  actor is 403 and changes nothing; a freelancer of project B can't submit on project A; a client
+  can't top up someone else's wallet; 401 cases; the transition audit trail).
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)
@@ -315,12 +344,14 @@ Regression: `DisputeRulesIT.splitThatDoesNotAddUpIs422`.
   because the conditional state update rejects the second transition and rolls back its posting.
   But the ledger-level guard of invariant 8 is missing for these flows.
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
-  - P5's role checks: a freelancer approving or a client submitting should be 403, but the escrow
-    service takes no actor at all.
   - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
   - P10's mock payout provider (the module is still an empty app; tests use `FakePayoutProvider`).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
+- **Ledger transfer and account endpoints have no actor check.** `POST /api/v1/transfers` and
+  `POST /api/v1/accounts` say "ADMIN only" in their javadoc but accept any caller (the load
+  scripts and several tests drive transfers with no or non-admin headers). Out of scope for #36,
+  which covered escrow, disputes, deposits, payouts and the admin endpoints.
 - **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
   Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
   real one.

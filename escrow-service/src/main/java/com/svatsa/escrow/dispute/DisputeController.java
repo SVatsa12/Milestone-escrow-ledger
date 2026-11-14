@@ -1,6 +1,6 @@
 package com.svatsa.escrow.dispute;
 
-import java.util.Map;
+import com.svatsa.escrow.common.Actor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,19 +35,12 @@ public class DisputeController {
      */
     @PostMapping
     public ResponseEntity<Dispute> openDispute(
+        Actor actor,
         @RequestBody OpenDisputeRequest request,
-        @RequestHeader(value = "X-Actor-Id", required = false) Long actorId,
-        @RequestHeader(value = "X-Actor-Role", required = false) String actorRole,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return ResponseEntity.badRequest().build();
-        }
-        if (actorId == null || actorRole == null) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-        if (!actorRole.matches("CLIENT|FREELANCER")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
         if (request.milestoneId() == null || request.reason() == null || request.reason().isBlank()) {
@@ -55,9 +48,8 @@ public class DisputeController {
         }
 
         Dispute dispute = disputeService.openDispute(
+            actor,
             request.milestoneId(),
-            actorId,
-            actorRole,
             request.reason(),
             "dispute-freeze:milestone:" + request.milestoneId()
         );
@@ -73,17 +65,13 @@ public class DisputeController {
      */
     @PostMapping("/{id}/resolve")
     public ResponseEntity<Void> resolveDispute(
+        Actor actor,
         @PathVariable Long id,
         @RequestBody ResolvDisputeRequest request,
-        @RequestHeader(value = "X-Actor-Id", required = false) Long actorId,
-        @RequestHeader(value = "X-Actor-Role", required = false) String actorRole,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
     ) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return ResponseEntity.badRequest().build();
-        }
-        if (actorId == null || !"ADMIN".equals(actorRole)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
         if (request.freelancerSharePaise() == null || request.clientSharePaise() == null) {
@@ -91,11 +79,11 @@ public class DisputeController {
         }
 
         disputeService.resolveDispute(
+            actor,
             id,
             request.freelancerSharePaise(),
             request.clientSharePaise(),
             request.resolutionNote() != null ? request.resolutionNote() : "",
-            actorId,
             "dispute-resolve:" + id
         );
 

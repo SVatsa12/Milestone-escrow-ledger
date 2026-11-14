@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.dispute.DisputeService;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -102,7 +103,7 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         Instant dueDate = now.plusSeconds(86400);
 
         project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Test Project",
             Duration.ofDays(3),
@@ -110,9 +111,9 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         );
 
         // Fund and submit
-        escrowService.fundProject(project.id(), "fund:project:" + project.id());
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund:project:" + project.id());
         milestone = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(milestone.id(), "submit:milestone:" + milestone.id());
+        escrowService.submitMilestone(freelancerOfMilestone(milestone.id()), milestone.id(), "submit:milestone:" + milestone.id());
     }
 
     @Test
@@ -128,7 +129,7 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             executor.submit(() -> {
                 try {
                     String key = "approve:milestone:" + milestone.id() + ":" + Thread.currentThread().getId();
-                    escrowService.approveMilestone(milestone.id(), key);
+                    escrowService.approveMilestone(clientOfMilestone(milestone.id()), milestone.id(), key);
                     successCount.incrementAndGet();
                 } catch (Exception e) {
                     failureCount.incrementAndGet();
@@ -164,9 +165,8 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             executor.submit(() -> {
                 try {
                     disputeService.openDispute(
+                        Actors.client(client.id()),
                         milestone.id(),
-                        client.id(),
-                        "CLIENT",
                         "Issue " + thread,
                         "Evidence " + thread
                     );
@@ -199,7 +199,7 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         Instant dueDate = now.plusSeconds(86400);
 
         Project multiProject = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Multi Milestone",
             Duration.ofDays(3),
@@ -213,9 +213,9 @@ class ConcurrencyIT extends AbstractIntegrationTest {
         );
 
         // Fund and submit all milestones
-        escrowService.fundProject(multiProject.id(), "fund:project:" + multiProject.id());
+        escrowService.fundProject(clientOfProject(multiProject.id()), multiProject.id(), "fund:project:" + multiProject.id());
         for (Milestone m : milestoneRepository.findByProjectId(multiProject.id())) {
-            escrowService.submitMilestone(m.id(), "submit:milestone:" + m.id());
+            escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit:milestone:" + m.id());
         }
 
         // Spawn 5 threads each calling autoReleaseJob.runOnce()
@@ -267,9 +267,8 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             executor.submit(() -> {
                 try {
                     disputeService.openDispute(
+                        Actors.client(client.id()),
                         milestone.id(),
-                        client.id(),
-                        "CLIENT",
                         "Dispute",
                         "Evidence"
                     );
@@ -287,7 +286,7 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             executor.submit(() -> {
                 try {
                     escrowService.approveMilestone(
-                        milestone.id(),
+                        clientOfMilestone(milestone.id()), milestone.id(),
                         "approve:milestone:" + milestone.id() + ":" + Thread.currentThread().getId()
                     );
                     approveSuccess.incrementAndGet();
@@ -324,7 +323,7 @@ class ConcurrencyIT extends AbstractIntegrationTest {
             executor.submit(() -> {
                 try {
                     escrowService.approveMilestone(
-                        milestone.id(),
+                        clientOfMilestone(milestone.id()), milestone.id(),
                         "approve:milestone:" + milestone.id() + ":" + System.nanoTime()
                     );
                 } catch (Exception ignored) {

@@ -1,5 +1,6 @@
 package com.svatsa.escrow.payouts;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.chaos.FakePayoutProvider;
 import com.svatsa.escrow.chaos.FakePayoutProvider.Mode;
 import com.svatsa.escrow.ledger.AccountRepository;
@@ -200,7 +201,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     // --- helpers -----------------------------------------------------------------------------
 
     private Payout request() {
-        return payoutService.requestPayout(freelancerId, walletId, AMOUNT, "saga-" + UUID.randomUUID());
+        return payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletId, AMOUNT, "saga-" + UUID.randomUUID());
     }
 
     private PayoutState state(Payout p) {

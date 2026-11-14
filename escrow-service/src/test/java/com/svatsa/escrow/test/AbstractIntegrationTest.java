@@ -1,6 +1,8 @@
 package com.svatsa.escrow.test;
 
 import com.svatsa.escrow.chaos.FakePayoutProvider;
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.recon.InvariantChecker;
 import com.svatsa.escrow.recon.Violation;
 import eu.rekawek.toxiproxy.Proxy;
@@ -180,6 +182,35 @@ public abstract class AbstractIntegrationTest {
         for (Toxic toxic : proxy.toxics().getAll()) {
             toxic.remove();
         }
+    }
+
+    // --- actors for tests that call services directly ------------------------------------------
+
+    /** The client of a project, as the actor that may fund it. */
+    protected Actor clientOfProject(long projectId) {
+        return Actors.client(jdbcClient.sql("SELECT client_id FROM projects WHERE id = ?")
+            .param(projectId).query(Long.class).single());
+    }
+
+    /** The client of a milestone's project (approve, cancel, dispute). */
+    protected Actor clientOfMilestone(long milestoneId) {
+        return Actors.client(jdbcClient.sql(
+                "SELECT p.client_id FROM milestones m JOIN projects p ON p.id = m.project_id WHERE m.id = ?")
+            .param(milestoneId).query(Long.class).single());
+    }
+
+    /** The freelancer of a milestone's project (submit, dispute). */
+    protected Actor freelancerOfMilestone(long milestoneId) {
+        return Actors.freelancer(jdbcClient.sql(
+                "SELECT p.freelancer_id FROM milestones m JOIN projects p ON p.id = m.project_id WHERE m.id = ?")
+            .param(milestoneId).query(Long.class).single());
+    }
+
+    /** A new ADMIN user (disputes.resolved_by references users, so an admin must be a real user). */
+    protected Actor newAdmin() {
+        long id = jdbcClient.sql("INSERT INTO users (name, role) VALUES ('admin', 'ADMIN') RETURNING id")
+            .query(Long.class).single();
+        return new Actor(id, Role.ADMIN);
     }
 
     public static List<String> describe(List<Violation> violations) {

@@ -1,5 +1,6 @@
 package com.svatsa.escrow.deposits;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.escrow.User;
 import com.svatsa.escrow.escrow.UserRepository;
 import com.svatsa.escrow.ledger.AccountRepository;
@@ -52,7 +53,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("a valid payment.captured credits the wallet exactly once")
     void validCaptureCreditsTheWallet() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 50_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 50_000);
 
         assertThat(send(evt(), captured(order.razorpayOrderId(), pay(), 50_000)).statusCode()).isEqualTo(200);
 
@@ -63,7 +64,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("the same event id 50 times at once → one credit")
     void concurrentDuplicateEventsCreditOnce() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 20_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 20_000);
         String eventId = evt();
         byte[] body = captured(order.razorpayOrderId(), pay(), 20_000);
 
@@ -81,7 +82,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("order.paid after payment.captured (new event id, same payment) → still one credit")
     void orderPaidAfterCaptureCreditsOnce() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 30_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 30_000);
         String paymentId = pay();
 
         assertThat(send(evt(), captured(order.razorpayOrderId(), paymentId, 30_000)).statusCode()).isEqualTo(200);
@@ -93,7 +94,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("a bad signature → 400, nothing recorded, no money")
     void badSignatureIsRejected() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 10_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 10_000);
         String eventId = evt();
         byte[] body = captured(order.razorpayOrderId(), pay(), 10_000);
 
@@ -109,7 +110,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("an amount that doesn't match the order → AMOUNT_MISMATCH, no money")
     void amountMismatchMovesNoMoney() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 10_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 10_000);
 
         assertThat(send(evt(), captured(order.razorpayOrderId(), pay(), 9_999)).statusCode()).isEqualTo(200);
 
@@ -120,7 +121,7 @@ class DepositWebhookIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("the signature is checked against the raw bytes, not re-serialised JSON")
     void signatureIsOverRawBytes() throws Exception {
-        var order = depositService.initiateDeposit(client.id(), 15_000);
+        var order = depositService.initiateDeposit(Actors.client(client.id()), client.id(), 15_000);
         String compact = new String(captured(order.razorpayOrderId(), pay(), 15_000), StandardCharsets.UTF_8);
         byte[] spaced = compact.replace(",", ", ").replace(":", ": ").getBytes(StandardCharsets.UTF_8);
 

@@ -1,5 +1,6 @@
 package com.svatsa.escrow.dispute;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.common.Money;
 import com.svatsa.escrow.escrow.EscrowService;
 import com.svatsa.escrow.escrow.Milestone;
@@ -111,7 +112,7 @@ class DisputeIT extends AbstractIntegrationTest {
         Instant dueDate = now.plusSeconds(86400);
 
         project = escrowService.createProject(
-            client.id(),
+            Actors.client(client.id()), client.id(),
             freelancer.id(),
             "Test Project",
             Duration.ofDays(3),
@@ -119,11 +120,11 @@ class DisputeIT extends AbstractIntegrationTest {
         );
 
         // Fund and submit the milestone
-        escrowService.fundProject(project.id(), "fund:project:" + project.id());
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund:project:" + project.id());
         milestone = milestoneRepository.findByProjectId(project.id()).get(0);
         assertThat(milestone.state()).isEqualTo(MilestoneState.FUNDED);
 
-        escrowService.submitMilestone(milestone.id(), "submit:milestone:" + milestone.id());
+        escrowService.submitMilestone(freelancerOfMilestone(milestone.id()), milestone.id(), "submit:milestone:" + milestone.id());
         milestone = milestoneRepository.findById(milestone.id()).orElseThrow();
         assertThat(milestone.state()).isEqualTo(MilestoneState.SUBMITTED);
     }
@@ -137,9 +138,8 @@ class DisputeIT extends AbstractIntegrationTest {
 
         // Open dispute
         Dispute dispute = disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Quality issues",
             "dispute-freeze:milestone:" + milestone.id()
         );
@@ -165,9 +165,8 @@ class DisputeIT extends AbstractIntegrationTest {
     void testDuplicateDisputeBlocked() {
         // Open first dispute
         disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Quality issues",
             "dispute-freeze:milestone:" + milestone.id()
         );
@@ -175,9 +174,8 @@ class DisputeIT extends AbstractIntegrationTest {
         // Try to open another on the same milestone
         assertThatThrownBy(() ->
             disputeService.openDispute(
+                Actors.freelancer(freelancer.id()),
                 milestone.id(),
-                freelancer.id(),
-                "FREELANCER",
                 "Different issue",
                 "dispute-freeze:milestone:" + milestone.id()
             )
@@ -199,16 +197,15 @@ class DisputeIT extends AbstractIntegrationTest {
     void testApproveFailsWhileDisputed() {
         // Open dispute
         disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Quality issues",
             "Evidence..."
         );
 
         // Try to approve (should fail due to state check)
         assertThatThrownBy(() ->
-            escrowService.approveMilestone(milestone.id(), "approve:milestone:" + milestone.id())
+            escrowService.approveMilestone(clientOfMilestone(milestone.id()), milestone.id(), "approve:milestone:" + milestone.id())
         )
             .isInstanceOf(com.svatsa.escrow.escrow.InvalidStateTransitionException.class);
     }
@@ -218,9 +215,8 @@ class DisputeIT extends AbstractIntegrationTest {
     void testResolveFreelancerWins() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "False claim",
             "dispute-freeze:milestone:" + milestone.id()
         );
@@ -231,11 +227,10 @@ class DisputeIT extends AbstractIntegrationTest {
         long freelancerNet = 100_000 - fee; // 95,000
 
         disputeService.resolveDispute(
-            dispute.id(),
+            newAdmin(), dispute.id(),
             100_000L,
             0L,  // client gets nothing
             "Freelancer performed correctly",
-            client.id(),
             "dispute-resolve:" + dispute.id()
         );
 
@@ -268,20 +263,18 @@ class DisputeIT extends AbstractIntegrationTest {
     void testResolveClientWins() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Quality issues",
             "dispute-freeze:milestone:" + milestone.id()
         );
 
         // Resolve: client refund (100,000), freelancer gets nothing
         disputeService.resolveDispute(
-            dispute.id(),
+            newAdmin(), dispute.id(),
             0L,  // freelancer gets nothing
             100_000L,  // client gets full refund
             "Poor quality work",
-            client.id(),
             "dispute-resolve:" + dispute.id()
         );
 
@@ -310,9 +303,8 @@ class DisputeIT extends AbstractIntegrationTest {
     void testResolveSplit70_30() {
         // Setup and open dispute
         Dispute dispute = disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Partial issue",
             "dispute-freeze:milestone:" + milestone.id()
         );
@@ -324,11 +316,10 @@ class DisputeIT extends AbstractIntegrationTest {
         long clientShare = 33_500L;    // the rest to client
 
         disputeService.resolveDispute(
-            dispute.id(),
+            newAdmin(), dispute.id(),
             freelancerNet,
             clientShare,
             "Partial responsibility",
-            client.id(),
             "dispute-resolve:" + dispute.id()
         );
 
@@ -347,20 +338,18 @@ class DisputeIT extends AbstractIntegrationTest {
     void testInvariantsHoldAfterDispute() {
         // Open dispute
         Dispute dispute = disputeService.openDispute(
+            Actors.client(client.id()),
             milestone.id(),
-            client.id(),
-            "CLIENT",
             "Quality issues",
             "dispute-freeze:milestone:" + milestone.id()
         );
 
         // Resolve
         disputeService.resolveDispute(
-            dispute.id(),
+            newAdmin(), dispute.id(),
             50_000L,
             50_000L,
             "Split decision",
-            client.id(),
             "dispute-resolve:" + dispute.id()
         );
 

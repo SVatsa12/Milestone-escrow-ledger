@@ -1,5 +1,8 @@
 package com.svatsa.escrow.deposits;
 
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
+import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.common.ValidationException;
 import com.svatsa.escrow.idempotency.IdempotencyService;
 import com.svatsa.escrow.outbox.OutboxWriter;
@@ -47,12 +50,14 @@ public class DepositService {
     /**
      * Create a deposit order.
      * 
-     * @param clientId ID of the client depositing
+     * @param actor who is asking: only the client themselves may top up their wallet
+     * @param clientId ID of the client whose wallet is credited
      * @param amountPaise amount in paise
      * @return deposit details including Razorpay order ID
      */
     @Transactional
-    public DepositResponse initiateDeposit(Long clientId, long amountPaise) {
+    public DepositResponse initiateDeposit(Actor actor, long clientId, long amountPaise) {
+        Authz.require(actor.is(Role.CLIENT, clientId), actor, "top up the wallet of client " + clientId);
         if (amountPaise <= 0) {
             throw new ValidationException("Amount must be positive");
         }
@@ -72,7 +77,7 @@ public class DepositService {
         // Create Razorpay order
         Map<String, String> notes = new HashMap<>();
         notes.put("depositId", depositId.toString());
-        notes.put("clientId", clientId.toString());
+        notes.put("clientId", Long.toString(clientId));
 
         String orderId = razorpayGateway.createOrder(
             amountPaise,

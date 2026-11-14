@@ -1,5 +1,6 @@
 package com.svatsa.escrow.deposits;
 
+import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.ValidationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,31 +28,27 @@ public class DepositController {
      * Initiate a new deposit (top-up wallet).
      * 
      * Requires:
-     * - X-Actor-Id header: client user ID
-     * - X-Actor-Role header: must be CLIENT
+     * - X-Actor-Id / X-Actor-Role headers (401 UNAUTHENTICATED if missing or invalid)
      * - Idempotency-Key header: for idempotency
      * 
-     * Body: { "amountPaise": 10000 }
+     * Body: { "amountPaise": 10000, "clientId": 42 }. clientId is optional and defaults to the
+     * actor; a client may only top up their own wallet.
      * 
      * Returns:
      * - 200 with deposit details (depositId, razorpayOrderId, keyId, amountPaise)
      * - 400 if validation fails (amount <= 0)
-     * - 403 if not a CLIENT
+     * - 403 FORBIDDEN unless the actor is that CLIENT
      */
     @PostMapping
     public ResponseEntity<?> initiateDeposit(
-        @RequestHeader("X-Actor-Id") Long actorId,
-        @RequestHeader("X-Actor-Role") String actorRole,
+        Actor actor,
         @RequestBody InitiateDepositRequest request
     ) {
-        // Authorization check
-        if (!"CLIENT".equals(actorRole)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-
+        long clientId = request.clientId() != null ? request.clientId() : actor.id();
         try {
             DepositService.DepositResponse response = depositService.initiateDeposit(
-                actorId,
+                actor,
+                clientId,
                 request.amountPaise()
             );
             return ResponseEntity.ok(response);
@@ -80,7 +77,8 @@ public class DepositController {
      * Request body for initiating a deposit.
      */
     public record InitiateDepositRequest(
-        long amountPaise
+        long amountPaise,
+        Long clientId
     ) {}
 
     /**

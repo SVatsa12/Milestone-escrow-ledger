@@ -1,6 +1,9 @@
 package com.svatsa.escrow.dispute;
 
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import com.svatsa.escrow.common.Money;
+import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.escrow.EscrowConfigurationProperties;
 import com.svatsa.escrow.escrow.InvalidStateTransitionException;
 import com.svatsa.escrow.escrow.Milestone;
@@ -64,14 +67,18 @@ public class DisputeService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Dispute openDispute(
+        Actor actor,
         Long milestoneId,
-        Long openedBy,
-        String openedByRole,
         String reason,
         String idempotencyKey
     ) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
+        Project project = projectRepository.findById(milestone.projectId())
+            .orElseThrow(() -> new IllegalArgumentException("Project not found: " + milestone.projectId()));
+        // Either party of this project may dispute; nobody else.
+        Authz.require(actor.is(Role.CLIENT, project.clientId()) || actor.is(Role.FREELANCER, project.freelancerId()),
+            actor, "dispute milestone " + milestoneId);
 
         if (milestone.state() != MilestoneState.SUBMITTED) {
             throw InvalidStateTransitionException.invalidTransition(
@@ -80,10 +87,7 @@ public class DisputeService {
             );
         }
 
-        // Get project and accounts
-        Project project = projectRepository.findById(milestone.projectId())
-            .orElseThrow();
-
+        // Get accounts
         var escrowAccount = accountRepository.findById(project.escrowAccountId())
             .orElseThrow();
         var disputeHoldAccount = accountRepository.findById(project.disputeHoldAccountId())
@@ -94,7 +98,10 @@ public class DisputeService {
             milestoneId,
             MilestoneState.SUBMITTED,
             MilestoneState.DISPUTED,
-            milestone.version()
+            milestone.version(),
+            actor,
+            "dispute opened: " + reason,
+            null
         );
 
         if (!success) {
@@ -126,8 +133,8 @@ public class DisputeService {
         try {
             dispute = disputeRepository.save(
                 milestoneId,
-                openedBy,
-                openedByRole,
+                actor.id(),
+                actor.role().name(),
                 reason,
                 null
             );
@@ -147,8 +154,8 @@ public class DisputeService {
                 project.id(),
                 project.clientId(),
                 project.freelancerId(),
-                openedBy,
-                openedByRole,
+                actor.id(),
+                actor.role().name(),
                 reason,
                 milestone.title()
             )
@@ -169,13 +176,14 @@ public class DisputeService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void resolveDispute(
+        Actor actor,
         Long disputeId,
         Long freelancerSharePaise,
         Long clientSharePaise,
         String resolutionNote,
-        Long resolvedBy,
         String idempotencyKey
     ) {
+        Authz.requireAdmin(actor, "resolve dispute " + disputeId);
         Dispute dispute = disputeRepository.findById(disputeId)
             .orElseThrow(() -> new IllegalArgumentException("Dispute not found: " + disputeId));
 
@@ -250,7 +258,7 @@ public class DisputeService {
         }
 
         // Post: DISPUTE_HOLD split
-        ledgerService.post(
+        long entryId = ledgerService.post(
             new PostingRequest(
                 "TRANSFER",
                 "DISPUTE",
@@ -259,7 +267,7 @@ public class DisputeService {
                 "Resolve dispute: " + resolutionNote,
                 legs
             )
-        );
+        ).entryId();
 
         // Update dispute record
         disputeRepository.resolve(
@@ -267,8 +275,8 @@ public class DisputeService {
             freelancerSharePaise,
             clientSharePaise,
             resolutionNote,
-            resolvedBy,
-            null // TODO: get journal_entry_id from ledger
+            actor.id(),
+            entryId
         );
 
         // Transition: DISPUTED → RESOLVED
@@ -276,7 +284,10 @@ public class DisputeService {
             dispute.milestoneId(),
             MilestoneState.DISPUTED,
             MilestoneState.RESOLVED,
-            milestone.version()
+            milestone.version(),
+            actor,
+            "dispute " + disputeId + " resolved by admin",
+            entryId
         );
 
         if (!success) {

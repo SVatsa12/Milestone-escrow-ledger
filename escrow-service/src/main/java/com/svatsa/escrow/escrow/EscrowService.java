@@ -1,6 +1,9 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import com.svatsa.escrow.common.Money;
+import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.Leg;
@@ -23,6 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
  * - State transitions via conditional UPDATE ... WHERE state = ?
  * - Fee calculation: fee = amount * feeBps / 10_000 (integer floor)
  * - All amounts in paise (long), never double/float
+ * - Every method takes the {@link Actor} and checks it before touching anything: fund, approve
+ *   and cancel are the project's client only, submit is the project's freelancer only. Approve
+ *   also accepts {@link Actor#SYSTEM} (the auto-release job). A wrong actor is 403 FORBIDDEN.
  */
 @Service
 public class EscrowService {
@@ -63,12 +69,17 @@ public class EscrowService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Project createProject(
+        Actor actor,
         Long clientId,
         Long freelancerId,
         String title,
         Duration reviewWindow,
         List<MilestoneSpec> milestoneSpecs
     ) {
+        // A client creates their own projects (an admin may create one for anyone).
+        Authz.require(actor.role() == Role.ADMIN || actor.is(Role.CLIENT, clientId),
+            actor, "create a project for client " + clientId);
+
         // Verify users exist
         userRepository.findById(clientId)
             .orElseThrow(() -> new IllegalArgumentException("Client not found: " + clientId));
@@ -121,9 +132,10 @@ public class EscrowService {
      * Journal entry with idempotency_key = "fund:project:{projectId}"
      */
     @Transactional(rollbackFor = Exception.class)
-    public void fundProject(Long projectId, String idempotencyKey) {
+    public void fundProject(Actor actor, Long projectId, String idempotencyKey) {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new IllegalArgumentException("Project not found: " + projectId));
+        Authz.require(actor.is(Role.CLIENT, project.clientId()), actor, "fund project " + projectId);
 
         List<Milestone> milestones = milestoneRepository.findByProjectId(projectId);
         long totalAmount = milestones.stream()
@@ -143,7 +155,7 @@ public class EscrowService {
         var escrowAccount = accountRepository.findById(project.escrowAccountId())
             .orElseThrow(() -> new IllegalArgumentException("Escrow account not found"));
 
-        ledgerService.post(
+        long entryId = ledgerService.post(
             new PostingRequest(
                 "TRANSFER",
                 "PROJECT",
@@ -155,7 +167,7 @@ public class EscrowService {
                     new Leg(escrowAccount.id(), totalAmount)
                 )
             )
-        );
+        ).entryId();
 
         // Transition all DRAFT milestones to FUNDED
         for (Milestone m : milestones) {
@@ -164,7 +176,10 @@ public class EscrowService {
                     m.id(),
                     MilestoneState.DRAFT,
                     MilestoneState.FUNDED,
-                    m.version()
+                    m.version(),
+                    actor,
+                    "project funded",
+                    entryId
                 );
                 if (!success) {
                     throw new InvalidStateTransitionException(
@@ -192,9 +207,12 @@ public class EscrowService {
      * Simple state transition, no money movement.
      */
     @Transactional(rollbackFor = Exception.class)
-    public void submitMilestone(Long milestoneId, String idempotencyKey) {
+    public void submitMilestone(Actor actor, Long milestoneId, String idempotencyKey) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
+        Project project = projectRepository.findById(milestone.projectId())
+            .orElseThrow(() -> new IllegalArgumentException("Project not found: " + milestone.projectId()));
+        Authz.require(actor.is(Role.FREELANCER, project.freelancerId()), actor, "submit milestone " + milestoneId);
 
         if (milestone.state() != MilestoneState.FUNDED) {
             throw InvalidStateTransitionException.invalidTransition(
@@ -207,7 +225,10 @@ public class EscrowService {
             milestoneId,
             MilestoneState.FUNDED,
             MilestoneState.SUBMITTED,
-            milestone.version()
+            milestone.version(),
+            actor,
+            "work submitted",
+            null
         );
 
         if (!success) {
@@ -218,9 +239,6 @@ public class EscrowService {
         }
 
         // Emit MilestoneSubmitted event
-        Project project = projectRepository.findById(milestone.projectId())
-            .orElseThrow(() -> new IllegalArgumentException("Project not found: " + milestone.projectId()));
-        
         int reviewWindowDays = (int) (project.reviewWindow().toDays());
         
         outboxWriter.write(
@@ -251,9 +269,15 @@ public class EscrowService {
      * where fee = A * feeBps / 10_000 (integer floor division)
      */
     @Transactional(rollbackFor = Exception.class)
-    public void approveMilestone(Long milestoneId, String idempotencyKey) {
+    public void approveMilestone(Actor actor, Long milestoneId, String idempotencyKey) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
+        Project project = projectRepository.findById(milestone.projectId())
+            .orElseThrow(() -> new IllegalArgumentException("Project not found"));
+        // The client approves; SYSTEM is the auto-release job (review window expired).
+        boolean autoRelease = actor.isSystem();
+        Authz.require(autoRelease || actor.is(Role.CLIENT, project.clientId()), actor,
+            "approve milestone " + milestoneId);
 
         if (milestone.state() != MilestoneState.SUBMITTED) {
             throw InvalidStateTransitionException.invalidTransition(
@@ -267,9 +291,6 @@ public class EscrowService {
         long freelancerAmount = milestone.amountPaise() - fee;
 
         // Get accounts
-        Project project = projectRepository.findById(milestone.projectId())
-            .orElseThrow(() -> new IllegalArgumentException("Project not found"));
-
         var escrowAccount = accountRepository.findById(project.escrowAccountId())
             .orElseThrow();
 
@@ -285,7 +306,10 @@ public class EscrowService {
             milestoneId,
             MilestoneState.SUBMITTED,
             MilestoneState.APPROVED,
-            milestone.version()
+            milestone.version(),
+            actor,
+            autoRelease ? "auto-approved: review window expired" : "approved by client",
+            null
         );
 
         if (!approveSuccess) {
@@ -300,7 +324,7 @@ public class EscrowService {
         // the milestone with FOR UPDATE, then calls this method). Posting first locked the accounts
         // before the milestone, and an approve racing the job deadlocked (found by AutoReleaseIT).
         // Create 3-leg journal entry: ESCROW -> FREELANCER_WALLET + PLATFORM_FEES
-        ledgerService.post(
+        long entryId = ledgerService.post(
             new PostingRequest(
                 "TRANSFER",
                 "MILESTONE",
@@ -313,7 +337,7 @@ public class EscrowService {
                     new Leg(platformFeesAccount.id(), fee)
                 )
             )
-        );
+        ).entryId();
 
         // Refresh milestone to get updated version
         Milestone refreshed = milestoneRepository.findById(milestoneId)
@@ -324,7 +348,10 @@ public class EscrowService {
             milestoneId,
             MilestoneState.APPROVED,
             MilestoneState.RELEASED,
-            refreshed.version()
+            refreshed.version(),
+            actor,
+            "released to freelancer",
+            entryId
         );
 
         if (!releaseSuccess) {
@@ -360,7 +387,7 @@ public class EscrowService {
                 milestone.amountPaise(),
                 fee,
                 freelancerAmount,
-                false, // not auto-released
+                autoRelease,
                 milestone.title()
             )
         );
@@ -374,9 +401,12 @@ public class EscrowService {
      * Money flow (if FUNDED): ESCROW -> CLIENT_WALLET
      */
     @Transactional(rollbackFor = Exception.class)
-    public void cancelMilestone(Long milestoneId, String idempotencyKey, Duration gracePeriod) {
+    public void cancelMilestone(Actor actor, Long milestoneId, String idempotencyKey, Duration gracePeriod) {
         Milestone milestone = milestoneRepository.findById(milestoneId)
             .orElseThrow(() -> new IllegalArgumentException("Milestone not found: " + milestoneId));
+        Project project = projectRepository.findById(milestone.projectId())
+            .orElseThrow(() -> new IllegalArgumentException("Project not found: " + milestone.projectId()));
+        Authz.require(actor.is(Role.CLIENT, project.clientId()), actor, "cancel milestone " + milestoneId);
 
         if (milestone.state() == MilestoneState.DRAFT) {
             // DRAFT can be cancelled immediately
@@ -384,7 +414,10 @@ public class EscrowService {
                 milestoneId,
                 MilestoneState.DRAFT,
                 MilestoneState.CANCELLED,
-                milestone.version()
+                milestone.version(),
+                actor,
+                "cancelled before funding",
+                null
             );
 
             if (!success) {
@@ -420,9 +453,6 @@ public class EscrowService {
             }
 
             // Refund to client
-            Project project = projectRepository.findById(milestone.projectId())
-                .orElseThrow();
-
             var escrowAccount = accountRepository.findById(project.escrowAccountId())
                 .orElseThrow();
 
@@ -430,7 +460,7 @@ public class EscrowService {
             var clientWallet = accountRepository.findByCode(clientWalletCode)
                 .orElseThrow();
 
-            ledgerService.post(
+            long entryId = ledgerService.post(
                 new PostingRequest(
                     "TRANSFER",
                     "MILESTONE",
@@ -442,14 +472,17 @@ public class EscrowService {
                         new Leg(clientWallet.id(), milestone.amountPaise())
                     )
                 )
-            );
+            ).entryId();
 
             // Transition FUNDED -> CANCELLED
             boolean success = milestoneRepository.transitionState(
                 milestoneId,
                 MilestoneState.FUNDED,
                 MilestoneState.CANCELLED,
-                milestone.version()
+                milestone.version(),
+                actor,
+                "cancelled after due date + grace",
+                entryId
             );
 
             if (!success) {
@@ -467,7 +500,10 @@ public class EscrowService {
                 milestoneId,
                 MilestoneState.CANCELLED,
                 MilestoneState.REFUNDED,
-                refreshed.version()
+                refreshed.version(),
+                actor,
+                "refunded to client",
+                entryId
             );
 
             if (!refundSuccess) {

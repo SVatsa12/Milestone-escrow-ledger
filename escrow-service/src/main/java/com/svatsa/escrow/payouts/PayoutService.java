@@ -1,7 +1,10 @@
 package com.svatsa.escrow.payouts;
 
 import com.svatsa.escrow.chaos.ChaosConfig;
+import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import com.svatsa.escrow.common.DomainException;
+import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.ledger.LedgerService;
 import com.svatsa.escrow.ledger.Leg;
 import com.svatsa.escrow.ledger.PostingRequest;
@@ -67,13 +70,37 @@ public class PayoutService {
     }
 
     /**
+     * The API entry point: the actor (who must be a freelancer) pays out from their own wallet.
+     */
+    public Payout requestPayoutFromOwnWallet(Actor actor, long amountPaise, String idempotencyKey) {
+        Authz.require(actor.role() == Role.FREELANCER, actor, "request a payout");
+        long walletId = jdbcClient.sql("SELECT id FROM accounts WHERE code = ?")
+            .param("FREELANCER_WALLET:" + actor.id())
+            .query(Long.class)
+            .optional()
+            .orElseThrow(() -> new DomainException("NOT_FOUND", HttpStatus.NOT_FOUND, "Freelancer wallet not found"));
+        return requestPayout(actor, actor.id(), walletId, amountPaise, idempotencyKey);
+    }
+
+    /**
      * Request a payout. Idempotent per (freelancerId, idempotencyKey): a repeat returns the
      * existing payout and never calls the provider again.
      *
      * Must not be called inside an existing transaction: T1 has to be durable before the
      * provider is told to move money.
+     *
+     * Only the freelancer themselves, from their own wallet (FREELANCER_WALLET:{freelancerId}).
      */
-    public Payout requestPayout(long freelancerId, long walletAccountId, long amountPaise, String idempotencyKey) {
+    public Payout requestPayout(Actor actor, long freelancerId, long walletAccountId, long amountPaise,
+                                String idempotencyKey) {
+        Authz.require(actor.is(Role.FREELANCER, freelancerId), actor, "request a payout for freelancer " + freelancerId);
+        String walletCode = jdbcClient.sql("SELECT code FROM accounts WHERE id = ?")
+            .param(walletAccountId)
+            .query(String.class)
+            .optional()
+            .orElse(null);
+        Authz.require(("FREELANCER_WALLET:" + freelancerId).equals(walletCode), actor,
+            "pay out from account " + walletAccountId);
         record Reserved(Payout payout, boolean fresh) {}
 
         Reserved reserved = tx.execute(status -> {

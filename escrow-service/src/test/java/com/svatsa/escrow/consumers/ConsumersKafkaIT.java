@@ -1,5 +1,6 @@
 package com.svatsa.escrow.consumers;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.escrow.EscrowService;
 import com.svatsa.escrow.escrow.Milestone;
 import com.svatsa.escrow.escrow.MilestoneRepository;
@@ -97,12 +98,12 @@ class ConsumersKafkaIT extends AbstractIntegrationTest {
         tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest("DEPOSIT", "USER", client.id().toString(),
             "deposit:rzp:test-" + run, "seed", List.of(new Leg(bank, -50_000), new Leg(wallet, 50_000)))));
 
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "lifecycle-" + run,
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "lifecycle-" + run,
             Duration.ofDays(5), List.of(new EscrowService.MilestoneSpec("m1", 10_000, Instant.now().plus(Duration.ofDays(30)))));
-        escrowService.fundProject(project.id(), "fund-" + run);
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + run);
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m.id(), "submit-" + run);
-        escrowService.approveMilestone(m.id(), "approve-" + run);
+        escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + run);
+        escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-" + run);
 
         for (String[] agg : List.of(new String[]{"Project", String.valueOf(project.id())},
                                     new String[]{"Milestone", String.valueOf(m.id())})) {

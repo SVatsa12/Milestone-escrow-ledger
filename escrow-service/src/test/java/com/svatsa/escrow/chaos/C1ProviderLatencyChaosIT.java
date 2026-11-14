@@ -1,5 +1,6 @@
 package com.svatsa.escrow.chaos;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.payouts.PayoutRepository;
 import com.svatsa.escrow.payouts.PayoutService;
 import com.svatsa.escrow.payouts.PayoutState;
@@ -72,7 +73,7 @@ class C1ProviderLatencyChaosIT extends AbstractIntegrationTest {
 
         for (int i = 0; i < PAYOUT_COUNT; i++) {
             var payout = payoutService.requestPayout(
-                FREELANCER_ID,
+                Actors.freelancer(FREELANCER_ID), FREELANCER_ID,
                 WALLET_ACCOUNT_ID,
                 PAYOUT_AMOUNT,
                 "payout-latency-" + i

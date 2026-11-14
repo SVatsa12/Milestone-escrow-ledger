@@ -1,5 +1,6 @@
 package com.svatsa.escrow.escrow;
 
+import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.common.Money;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -64,7 +65,7 @@ class AutoReleaseIT extends AbstractIntegrationTest {
     void releasesExactlyAtTheEndOfTheReviewWindow() {
         Project project = fundedProject(100_000);
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + m.id());
         long feesBefore = balance("PLATFORM_FEES");
 
         clock.advance(WINDOW.minusSeconds(1));
@@ -86,7 +87,7 @@ class AutoReleaseIT extends AbstractIntegrationTest {
     void releasesAllEligibleMilestones() {
         Project project = fundedProject(100_000, 200_000);
         for (Milestone m : milestoneRepository.findByProjectId(project.id())) {
-            escrowService.submitMilestone(m.id(), "submit-" + m.id());
+            escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + m.id());
         }
         clock.advance(WINDOW.plusSeconds(1));
         autoReleaseJob.runOnce();
@@ -103,7 +104,7 @@ class AutoReleaseIT extends AbstractIntegrationTest {
     void approveVersusAutoReleaseReleasesOnce() throws Exception {
         Project project = fundedProject(100_000);
         Milestone m = milestoneRepository.findByProjectId(project.id()).get(0);
-        escrowService.submitMilestone(m.id(), "submit-" + m.id());
+        escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + m.id());
         clock.advance(WINDOW.plusSeconds(1));   // eligible for both paths
 
         List<Throwable> unexpected = Collections.synchronizedList(new ArrayList<>());
@@ -114,7 +115,7 @@ class AutoReleaseIT extends AbstractIntegrationTest {
                 pool.submit(() -> {
                     await(start);
                     try {
-                        escrowService.approveMilestone(m.id(), "approve-" + m.id() + "-" + n);
+                        escrowService.approveMilestone(clientOfMilestone(m.id()), m.id(), "approve-" + m.id() + "-" + n);
                     } catch (InvalidStateTransitionException expected) {
                         // lost the race: correct
                     } catch (Throwable t) {
@@ -151,7 +152,7 @@ class AutoReleaseIT extends AbstractIntegrationTest {
         java.util.Arrays.fill(amounts, 1_000);
         Project project = fundedProject(amounts);
         for (Milestone m : milestoneRepository.findByProjectId(project.id())) {
-            escrowService.submitMilestone(m.id(), "submit-" + m.id());
+            escrowService.submitMilestone(freelancerOfMilestone(m.id()), m.id(), "submit-" + m.id());
         }
         clock.advance(WINDOW.plusSeconds(1));
 
@@ -190,8 +191,8 @@ class AutoReleaseIT extends AbstractIntegrationTest {
         for (int i = 0; i < amounts.length; i++) {
             specs.add(new EscrowService.MilestoneSpec("m" + (i + 1), amounts[i], due));
         }
-        Project project = escrowService.createProject(client.id(), freelancer.id(), "auto-release", WINDOW, specs);
-        escrowService.fundProject(project.id(), "fund-" + project.id());
+        Project project = escrowService.createProject(Actors.client(client.id()), client.id(), freelancer.id(), "auto-release", WINDOW, specs);
+        escrowService.fundProject(clientOfProject(project.id()), project.id(), "fund-" + project.id());
         return project;
     }
 

@@ -36,8 +36,10 @@ public final class ApiClient {
     public HttpRequest.Builder postRequest(String path, String idempotencyKey, String[] headers, String body) {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
             .header("Content-Type", "application/json")
-            .headers(headers)
             .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (headers.length > 0) {
+            b.headers(headers);
+        }
         if (idempotencyKey != null) {
             b.header("Idempotency-Key", idempotencyKey);
         }
@@ -48,9 +50,17 @@ public final class ApiClient {
         return http.send(postRequest(path, idempotencyKey, headers, body).build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    public HttpResponse<String> get(String path) throws Exception {
-        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
-            HttpResponse.BodyHandlers.ofString());
+    public HttpResponse<String> get(String path, String... headers) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET();
+        if (headers.length > 0) {
+            b.headers(headers);
+        }
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** A POST with no Idempotency-Key and no actor headers at all. */
+    public HttpResponse<String> postWithoutActor(String path, String idempotencyKey, String body) throws Exception {
+        return post(path, idempotencyKey, new String[0], body);
     }
 
     public HttpClient http() {

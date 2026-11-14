@@ -137,6 +137,10 @@ public class OutboxRelay {
         );
         return MessageBuilder.withPayload(objectMapper.writeValueAsString(envelope))
             .setHeader(KafkaHeaders.TOPIC, row.topic())
+            // Key by aggregate so every event of one project/milestone/payout lands on the same
+            // partition, in outbox order. Without a key they were spread over the partitions and
+            // consumers could see e.g. MilestoneReleased before MilestoneSubmitted.
+            .setHeader(KafkaHeaders.KEY, row.aggregateType() + ":" + row.aggregateId())
             .setHeader("eventId", row.eventId().toString())
             .setHeader("eventType", row.eventType())
             .build();

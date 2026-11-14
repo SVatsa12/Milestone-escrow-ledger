@@ -277,6 +277,11 @@ so the producer looped on `UNKNOWN_TOPIC_OR_PARTITION`. **Fix:** a `DeadLetterPu
 failed deserialization, JSON otherwise), and the three `.DLT` topics declared as beans.
 Regression: `ConsumersKafkaIT.poisonMessageGoesToDltAndDoesNotBlock`.
 
+### 31. One aggregate's events had no order on Kafka
+The relay published without a key, so a project's events were spread over partitions and could be
+consumed out of order (P8 asks for "the expected sequence"). **Fix:** key = `aggregateType:aggregateId`.
+Regression: `ConsumersKafkaIT.lifecycleProducesTheExpectedAuditSequence`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

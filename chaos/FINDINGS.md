@@ -147,6 +147,21 @@ Regression: `AuditLogConsumerIT` waits for a ledger entry's event to land in `au
 - No JUnit regression is possible for compose. It was verified by bringing the stack up: Kafka
   is healthy, kafka-init exits 0 after creating the topics, and escrow-service reports UP.
 
+### 14. Outbox relay fell minutes behind under load (benchmark finding)
+- **Symptom:** after the first benchmark run, `/admin/invariants` reported `I9_WARN`: 28,778
+  (later 42,496) outbox rows unpublished for more than 5 minutes. Kafka lagged the DB by minutes.
+  Money invariants stayed clean.
+- **Root cause:** the relay published one event at a time: `kafkaTemplate.send(...).get()`,
+  then a separate `UPDATE outbox SET published_at` per row, then a 200ms sleep before the next
+  batch of 100. About 140 events/s, while every transfer writes at least one event.
+- **Fix:** send the whole batch asynchronously, wait for all acks, and mark every acked row
+  published in one `UPDATE ... WHERE id = ANY(?)`. Keep draining while batches come back full.
+  Still at-least-once: a row is marked only after Kafka acks it, and consumers dedupe by eventId.
+- **Result:** 5,000 events drained in 2.97s (about 1,700 events/s) against about 140 events/s
+  before, roughly 12× faster.
+- **Regression:** `OutboxRelayThroughputIT` (5,000 events within 10s). It was verified to fail
+  against the old relay, which still had 3,624 pending after 10s.
+
 ## Open issues (not fixed yet)
 - **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
   P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto

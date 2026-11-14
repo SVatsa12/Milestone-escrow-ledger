@@ -74,15 +74,72 @@ public class OutboxRelay {
      * Used by the scheduled method and also directly in tests.
      */
     public void runOnce() {
-        List<OutboxRow> rows = transactionTemplate.execute(tx -> claimBatch());
-
-        if (rows == null || rows.isEmpty()) {
-            return;
+        // Keep draining while batches come back full, instead of waiting a poll interval
+        // between batches. Bounded so one run can't hog the scheduler thread forever.
+        for (int i = 0; i < MAX_BATCHES_PER_RUN; i++) {
+            List<OutboxRow> rows = transactionTemplate.execute(tx -> claimBatch());
+            if (rows == null || rows.isEmpty()) {
+                return;
+            }
+            publishBatch(rows);
+            if (rows.size() < batchSize) {
+                return;
+            }
         }
+    }
 
+    private static final int MAX_BATCHES_PER_RUN = 50;
+
+    /**
+     * Send the whole batch asynchronously, wait for every ack, then mark all acked rows
+     * published in ONE update. It used to be send().get() plus an UPDATE per row, which capped
+     * the relay at a few hundred events/s and let the outbox fall minutes behind under load
+     * (found by the P15 benchmark). Still at-least-once: a row is marked published only after
+     * Kafka acked it; a crash between ack and mark re-sends it, and consumers dedupe by eventId.
+     */
+    private void publishBatch(List<OutboxRow> rows) {
+        List<java.util.concurrent.CompletableFuture<?>> sends = new java.util.ArrayList<>(rows.size());
         for (OutboxRow row : rows) {
-            publishEvent(row);
+            try {
+                sends.add(kafkaTemplate.send(toMessage(row)));
+            } catch (Exception e) {
+                sends.add(java.util.concurrent.CompletableFuture.failedFuture(e));
+            }
         }
+        List<Long> published = new java.util.ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            try {
+                sends.get(i).get(5, TimeUnit.SECONDS);
+                published.add(rows.get(i).id());
+            } catch (Exception e) {
+                Throwable cause = e instanceof java.util.concurrent.ExecutionException && e.getCause() != null ? e.getCause() : e;
+                handlePublishFailure(rows.get(i), cause instanceof Exception ex ? ex : e);
+            }
+        }
+        if (!published.isEmpty()) {
+            transactionTemplate.executeWithoutResult(tx -> jdbcClient.sql(
+                    "UPDATE outbox SET published_at = now() WHERE id = ANY(?)")
+                .param(published.toArray(new Long[0]))
+                .update());
+            meterRegistry.counter("outbox.published").increment(published.size());
+        }
+    }
+
+    private Message<String> toMessage(OutboxRow row) throws Exception {
+        EventEnvelope envelope = new EventEnvelope(
+            row.eventId(),
+            row.eventType(),
+            1, // schemaVersion
+            row.aggregateType(),
+            row.aggregateId(),
+            clock.instant(),
+            objectMapper.readTree(row.payload())
+        );
+        return MessageBuilder.withPayload(objectMapper.writeValueAsString(envelope))
+            .setHeader(KafkaHeaders.TOPIC, row.topic())
+            .setHeader("eventId", row.eventId().toString())
+            .setHeader("eventType", row.eventType())
+            .build();
     }
 
     /**
@@ -109,43 +166,6 @@ public class OutboxRelay {
             .param(batchSize)
             .query(OutboxRow.class)
             .list();
-    }
-
-    /**
-     * Publishes a single event to Kafka.
-     * On success, marks published_at. On failure, increments attempts and saves the error.
-     */
-    private void publishEvent(OutboxRow row) {
-        try {
-            EventEnvelope envelope = new EventEnvelope(
-                row.eventId(),
-                row.eventType(),
-                1, // schemaVersion
-                row.aggregateType(),
-                row.aggregateId(),
-                clock.instant(),
-                objectMapper.readTree(row.payload())
-            );
-
-            String envelopeJson = objectMapper.writeValueAsString(envelope);
-
-            // Build a message with Kafka headers for tracing
-            Message<String> message = MessageBuilder.withPayload(envelopeJson)
-                .setHeader(KafkaHeaders.TOPIC, row.topic())
-                .setHeader("eventId", row.eventId().toString())
-                .setHeader("eventType", row.eventType())
-                .build();
-
-            // Send to Kafka with a bounded timeout
-            kafkaTemplate.send(message).get(5, TimeUnit.SECONDS);
-
-            // Mark as published
-            markPublished(row.id());
-            meterRegistry.counter("outbox.published").increment();
-
-        } catch (Exception e) {
-            handlePublishFailure(row, e);
-        }
     }
 
     /**
@@ -187,22 +207,6 @@ public class OutboxRelay {
         );
 
         meterRegistry.counter("outbox.publish.failed").increment();
-    }
-
-    /**
-     * Marks an event as published (sets published_at to now).
-     */
-    private void markPublished(long id) {
-        transactionTemplate.execute(tx -> {
-            jdbcClient.sql("""
-                UPDATE outbox
-                SET published_at = now()
-                WHERE id = ?
-                """)
-                .param(id)
-                .update();
-            return null;
-        });
     }
 
     /**

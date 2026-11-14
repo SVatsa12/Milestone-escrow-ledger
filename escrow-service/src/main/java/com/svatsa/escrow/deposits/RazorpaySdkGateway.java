@@ -6,7 +6,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,11 +18,9 @@ import java.util.Map;
  * Only instantiated if razorpay.key-id and razorpay.key-secret are configured.
  */
 @Component
-@ConditionalOnProperty(
-    name = "razorpay.key-id",
-    havingValue = "not_empty",  // Will only match if explicitly set
-    matchIfMissing = false
-)
+// Real Razorpay (test mode) whenever a key id is configured. The old condition was
+// havingValue = "not_empty", which only matched the literal string "not_empty": never in practice.
+@org.springframework.boot.autoconfigure.condition.ConditionalOnExpression("!'${razorpay.key-id:}'.isBlank()")
 public class RazorpaySdkGateway implements RazorpayGateway {
     private static final Logger log = LoggerFactory.getLogger(RazorpaySdkGateway.class);
 

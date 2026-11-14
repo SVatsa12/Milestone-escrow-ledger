@@ -1,6 +1,5 @@
 package com.svatsa.escrow.deposits;
 
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -15,7 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * Generates fake order and payment IDs and tracks them in memory.
  */
 @Component
-@Primary
+// Only when no Razorpay key is configured (local dev, tests). It used to be an unconditional
+// @Primary, so the app always used the fake gateway, even with real keys set.
+@org.springframework.boot.autoconfigure.condition.ConditionalOnExpression("'${razorpay.key-id:}'.isBlank()")
 public class FakeRazorpayGateway implements RazorpayGateway {
 
     private final Map<String, FakeOrder> orders = new ConcurrentHashMap<>();

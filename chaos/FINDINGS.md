@@ -248,6 +248,13 @@ update, posting, outbox event); the controller verifies the signature and answer
 failure, so the rolled-back event is retried.
 Regression: `DepositWebhookIT` (every case checks the wallet balance).
 
+### 27. The app always used the fake Razorpay gateway
+`FakeRazorpayGateway` was an unconditional `@Component @Primary`, and `RazorpaySdkGateway` was
+conditional on `razorpay.key-id` having the literal value `"not_empty"`, so the real gateway never
+loaded, even with test-mode keys configured. **Fix:** the SDK gateway when a key id is set, the fake
+when it's blank.
+Regression: `DepositWebhookIT` (runs with no key id, so the fake is selected).
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

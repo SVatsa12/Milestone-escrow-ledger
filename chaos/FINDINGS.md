@@ -126,6 +126,12 @@ extend `RuntimeException`, not `DomainException`, so a second approve on the sam
 ("... not found") now maps to `404 NOT_FOUND`, and other bad input to `400 VALIDATION_FAILED`.
 Regression: `ErrorMappingIT`.
 
+### 11. Rate limiting was silently off everywhere
+`RateLimitConfig` binds `escrow.ratelimit.*`, but `application.yml` had the settings at top-level
+`ratelimit.*`. Nothing bound, so `enabled` defaulted to `false`. Fixed the yml. The Redis
+settings were also under Boot 2's `spring.redis.*` (ignored); they're now `spring.data.redis.*`.
+Regression: `RateLimitConfigBindingTest` binds the real `application.yml`.
+
 ## Open issues (not fixed yet)
 - **Kafka consumers crash-loop.** `JsonDeserializer` gets records with no type headers and no
   default type (`No type information in headers`), and there is no `ErrorHandlingDeserializer`,

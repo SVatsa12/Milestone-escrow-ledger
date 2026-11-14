@@ -112,7 +112,7 @@ public abstract class AbstractToxiproxyIT {
 
         registry.add("escrow.auto-release.enabled", () -> "false");
         // Rate limiting is not what these scenarios test; a 429 would hide the fault under test.
-        registry.add("ratelimit.enabled", () -> "false");
+        registry.add("escrow.ratelimit.enabled", () -> "false");
     }
 
     @TestConfiguration

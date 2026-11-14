@@ -36,10 +36,11 @@ spring:
       ack-mode: RECORD
       poll-timeout: 3000
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    timeout: 1s
+  data:
+    redis:   # Boot 3 reads spring.data.redis.*; the old spring.redis.* keys were ignored
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1s
 
 server:
   port: 8080
@@ -65,6 +66,13 @@ escrow:
   auto-release:
     poll-interval: 30s
     enabled: true
+  # Bound by RateLimitConfig (prefix escrow.ratelimit). This block used to sit at the top level as
+  # ratelimit.*, so nothing bound and every field defaulted to false/0: rate limiting was silently off.
+  ratelimit:
+    enabled: ${RATELIMIT_ENABLED:true}
+    default-limit: 30      # requests per minute for general money operations
+    payout-limit: 5        # requests per minute for payout operations (stricter)
+    window-seconds: 60     # duration of each rate limit window
 
 payouts:
   provider-base-url: ${PAYOUT_PROVIDER_URL:http://localhost:9090}
@@ -75,12 +83,6 @@ razorpay:
   key-id: ${RAZORPAY_KEY_ID:}
   key-secret: ${RAZORPAY_KEY_SECRET:}
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
-
-ratelimit:
-  enabled: true
-  default-limit: 30      # requests per minute for general money operations
-  payout-limit: 5        # requests per minute for payout operations (stricter)
-  window-seconds: 60     # duration of each rate limit window
 
 chaos:
   crash-point: NONE

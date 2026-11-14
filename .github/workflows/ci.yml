@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Builds every module in the root pom's reactor (escrow-service, mock-payout-provider).
+      # No service containers: integration tests start Postgres, Kafka, Redis and Toxiproxy
+      # themselves through Testcontainers, using the runner's Docker.
+      - name: Verify
+        run: ./mvnw -B verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            escrow-service/target/surefire-reports/
+            escrow-service/target/failsafe-reports/
+            mock-payout-provider/target/surefire-reports/
+            mock-payout-provider/target/failsafe-reports/
+          if-no-files-found: warn

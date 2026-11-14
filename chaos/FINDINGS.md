@@ -238,6 +238,16 @@ Postgres rejected it ("Token B is invalid") and every valid webhook failed. **Fi
 `new String(rawBody, UTF_8)`.
 Regression: `DepositWebhookIT.validCaptureCreditsTheWallet`.
 
+### 26. No Razorpay deposit ever credited a wallet
+The capture ran in the controller with **no transaction**: `LedgerService.post` (propagation
+MANDATORY) threw, the controller caught it and answered **200**, and the dedupe row was already
+committed, so Razorpay's retries were treated as duplicates. Money captured from the customer never
+reached their wallet, and the event was lost. The old tests only checked `webhook_events` rows.
+**Fix:** `DepositWebhookService.process(...)` is one `@Transactional` method (dedupe row, deposit
+update, posting, outbox event); the controller verifies the signature and answers 5xx on a genuine
+failure, so the rolled-back event is retried.
+Regression: `DepositWebhookIT` (every case checks the wallet balance).
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

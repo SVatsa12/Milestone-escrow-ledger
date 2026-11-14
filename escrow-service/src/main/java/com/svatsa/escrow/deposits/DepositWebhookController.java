@@ -2,24 +2,16 @@ package com.svatsa.escrow.deposits;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.svatsa.escrow.ledger.LedgerService;
-import com.svatsa.escrow.ledger.Leg;
-import com.svatsa.escrow.ledger.PostingRequest;
-import com.svatsa.escrow.outbox.OutboxWriter;
-import com.svatsa.escrow.outbox.events.Events;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 
-import java.util.List;
-import java.util.Optional;
 
 /**
  * Webhook controller for Razorpay payment events.
@@ -44,28 +36,19 @@ public class DepositWebhookController {
 
     private final WebhookSignatureVerifier signatureVerifier;
     private final RazorpayConfig razorpayConfig;
-    private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
-    private final DepositService depositService;
-    private final LedgerService ledgerService;
-    private final OutboxWriter outboxWriter;
+    private final DepositWebhookService webhookService;
 
     public DepositWebhookController(
         WebhookSignatureVerifier signatureVerifier,
         RazorpayConfig razorpayConfig,
-        JdbcClient jdbcClient,
         ObjectMapper objectMapper,
-        DepositService depositService,
-        LedgerService ledgerService,
-        OutboxWriter outboxWriter
+        DepositWebhookService webhookService
     ) {
         this.signatureVerifier = signatureVerifier;
         this.razorpayConfig = razorpayConfig;
-        this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
-        this.depositService = depositService;
-        this.ledgerService = ledgerService;
-        this.outboxWriter = outboxWriter;
+        this.webhookService = webhookService;
     }
 
     /**
@@ -99,184 +82,15 @@ public class DepositWebhookController {
         String eventType = payload.get("event").asText();
         JsonNode eventData = payload.get("contains");
 
-        // Step 3: Deduplicate by event ID
-        // INSERT ... ON CONFLICT DO NOTHING ensures this webhook is processed at most once
-        Integer inserted = jdbcClient.sql(
-            "INSERT INTO webhook_events (event_id, source, event_type, signature_valid, payload) " +
-            "VALUES (?, ?, ?, ?, ?::jsonb) ON CONFLICT DO NOTHING"
-        )
-            .param(eventId)
-            .param("razorpay")
-            .param(eventType)
-            .param(true)
-            .param(new String(rawBody, java.nio.charset.StandardCharsets.UTF_8)) // was rawBody.toString(): "[B@1a2b..." into a jsonb column
-            .update();
-
-        if (inserted == 0) {
-            // Duplicate webhook: already processed
-            log.debug("Duplicate webhook: eventId={}, eventType={}", eventId, eventType);
-            return ResponseEntity.ok().build();
-        }
-
-        // Step 4: Handle the event based on type
+        // Steps 3-5 run in one transaction in DepositWebhookService.
         try {
-            switch (eventType) {
-                case "payment.captured" -> handlePaymentCaptured(eventData, eventId);
-                case "order.paid" -> handleOrderPaid(eventData, eventId);
-                case "payment.failed" -> handlePaymentFailed(eventData, eventId);
-                default -> log.debug("Ignoring webhook event: eventType={}, eventId={}", eventType, eventId);
-            }
-
-            // Step 5: Mark the webhook as processed
-            jdbcClient.sql(
-                "UPDATE webhook_events SET processed_at = now() WHERE event_id = ?"
-            )
-                .param(eventId)
-                .update();
-
+            webhookService.process(eventId, eventType, rawBody, eventData);
             return ResponseEntity.ok().build();
         } catch (Exception e) {
-            log.error("Failed to process webhook: eventId={}, eventType={}, error={}",
-                eventId, eventType, e.getMessage());
-            // Don't rethrow: return 200 so Razorpay doesn't retry
-            // The webhook_events row remains unprocessed for manual review
-            return ResponseEntity.ok().build();
+            // A genuine failure rolled everything back, including the dedupe row: answer 5xx so
+            // Razorpay retries (this used to answer 200, and the event was lost for good).
+            log.error("webhook.failed eventId={} eventType={} error={}", eventId, eventType, e.toString(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
-    }
-
-    /**
-     * Handle payment.captured event.
-     * Extract payment ID, order ID, and amount. Credit the wallet if amount matches.
-     */
-    private void handlePaymentCaptured(JsonNode eventData, String eventId) {
-        String paymentId = eventData.get("payment").get("entity").get("id").asText();
-        String orderId = eventData.get("payment").get("entity").get("order_id").asText();
-        long capturedAmount = eventData.get("payment").get("entity").get("amount").asLong();
-
-        log.info("Processing payment.captured: eventId={}, paymentId={}, orderId={}, amountPaise={}",
-            eventId, paymentId, orderId, capturedAmount);
-
-        processCapture(orderId, paymentId, capturedAmount, eventId);
-    }
-
-    /**
-     * Handle order.paid event.
-     * Similar to payment.captured but triggered on the order.
-     */
-    private void handleOrderPaid(JsonNode eventData, String eventId) {
-        String orderId = eventData.get("order").get("entity").get("id").asText();
-        String paymentId = eventData.get("order").get("entity").get("receipt").asText();
-        long paidAmount = eventData.get("order").get("entity").get("amount").asLong();
-
-        log.info("Processing order.paid: eventId={}, orderId={}, amountPaise={}",
-            eventId, orderId, paidAmount);
-
-        processCapture(orderId, paymentId, paidAmount, eventId);
-    }
-
-    /**
-     * Handle payment.failed event.
-     */
-    private void handlePaymentFailed(JsonNode eventData, String eventId) {
-        String orderId = eventData.get("payment").get("entity").get("order_id").asText();
-        String reason = eventData.get("payment").get("entity").get("failure_reason").asText();
-
-        log.info("Processing payment.failed: eventId={}, orderId={}, reason={}",
-            eventId, orderId, reason);
-
-        depositService.recordFailure(orderId, "FAILED");
-    }
-
-    /**
-     * Process a capture: verify amount, credit wallet, emit event.
-     * All in one transaction.
-     */
-    private void processCapture(String orderId, String paymentId, long capturedAmount, String eventId) {
-        // Find the deposit by order ID
-        Optional<DepositService.DepositRecord> depositOpt = jdbcClient.sql(
-            "SELECT id, client_id, amount_paise, razorpay_order_id, razorpay_payment_id, status " +
-            "FROM deposits WHERE razorpay_order_id = ? FOR UPDATE"
-        )
-            .param(orderId)
-            .query((rs, rowNum) -> new DepositService.DepositRecord(
-                rs.getLong("id"),
-                rs.getLong("client_id"),
-                rs.getLong("amount_paise"),
-                rs.getString("razorpay_order_id"),
-                rs.getString("razorpay_payment_id"),
-                rs.getString("status")
-            ))
-            .optional();
-
-        if (depositOpt.isEmpty()) {
-            log.error("Deposit not found: orderId={}, eventId={}", orderId, eventId);
-            return;
-        }
-
-        DepositService.DepositRecord deposit = depositOpt.get();
-
-        // Verify amount matches
-        if (capturedAmount != deposit.amountPaise()) {
-            log.error("Amount mismatch: deposit={}, captured={}, orderId={}, eventId={}",
-                deposit.amountPaise(), capturedAmount, orderId, eventId);
-            depositService.recordFailure(orderId, "AMOUNT_MISMATCH");
-            return;
-        }
-
-        // Check if already captured (idempotent)
-        if ("CAPTURED".equals(deposit.status())) {
-            log.debug("Deposit already captured: depositId={}, eventId={}", deposit.id(), eventId);
-            return;
-        }
-
-        // Post to ledger: EXTERNAL_BANK:RAZORPAY -> CLIENT_WALLET
-        String clientWalletCode = "CLIENT_WALLET:" + deposit.clientId();
-        List<Leg> legs = List.of(
-            new Leg(getAccountId("EXTERNAL_BANK:RAZORPAY"), -capturedAmount),
-            new Leg(getAccountId(clientWalletCode), capturedAmount)
-        );
-
-        long entryId = ledgerService.post(
-            new PostingRequest(
-                "DEPOSIT",
-                "DEPOSIT",
-                deposit.id().toString(),
-                "deposit:rzp:" + paymentId,
-                "Razorpay deposit captured",
-                legs
-            )
-        ).entryId();
-
-        // Update deposit with payment ID and mark captured
-        depositService.recordCapture(orderId, paymentId, capturedAmount);
-
-        // Emit DepositCaptured event
-        outboxWriter.write(
-            "Deposit",
-            deposit.id().toString(),
-            "DepositCaptured",
-            "escrow.payment-events",
-            new Events.DepositCaptured(
-                deposit.id(),
-                deposit.clientId(),
-                capturedAmount,
-                paymentId,
-                orderId,
-                entryId
-            )
-        );
-
-        log.info("Deposit captured: depositId={}, clientId={}, amountPaise={}, entryId={}",
-            deposit.id(), deposit.clientId(), capturedAmount, entryId);
-    }
-
-    /**
-     * Get account ID by code (helper).
-     */
-    private Long getAccountId(String code) {
-        return jdbcClient.sql("SELECT id FROM accounts WHERE code = ?")
-            .param(code)
-            .query(Long.class)
-            .single();
     }
 }

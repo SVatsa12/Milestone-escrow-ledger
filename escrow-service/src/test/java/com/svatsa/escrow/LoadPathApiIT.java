@@ -1,9 +1,9 @@
 package com.svatsa.escrow;
 
+import com.svatsa.escrow.test.ProviderControl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.svatsa.escrow.chaos.AbstractToxiproxyIT;
-import com.svatsa.escrow.chaos.FakePayoutProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +30,7 @@ class LoadPathApiIT extends AbstractToxiproxyIT {
     @Test
     @DisplayName("setup, transfer, approve, dispute, payout, reads, invariants")
     void fullLoadPath() throws Exception {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(ProviderControl.Mode.SUCCESS);
         String run = UUID.randomUUID().toString().substring(0, 8);
 
         // Users: wallets are created by a DB trigger, found by code.

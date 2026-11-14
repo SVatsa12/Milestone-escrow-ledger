@@ -2,7 +2,6 @@ package com.svatsa.escrow.payouts;
 
 import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.chaos.AbstractToxiproxyIT;
-import com.svatsa.escrow.chaos.FakePayoutProvider;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -41,11 +40,17 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
     @Test
     @DisplayName("T1 is committed before the provider is called")
     void reservationIsDurableBeforeProviderCall() {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
         AtomicReference<String> stateSeenByProvider = new AtomicReference<>("NOT_VISIBLE");
-        // Runs on the provider's thread, i.e. on a different DB connection than the saga.
-        PROVIDER.onPost(key -> jdbcClient.sql("SELECT state FROM payouts WHERE id = ?::uuid")
-            .param(key).query(String.class).optional().ifPresent(stateSeenByProvider::set));
+        AtomicReference<String> reserveEntrySeenByProvider = new AtomicReference<>("NOT_VISIBLE");
+        // The provider's test-only PayoutRequestObserver: runs on the provider's request thread the
+        // moment the POST arrives, before it is processed, and reads escrow's database on another
+        // connection than the saga's. Only committed rows are visible from there.
+        PROVIDER.onPayoutRequest(key -> {
+            jdbcClient.sql("SELECT state FROM payouts WHERE id = ?::uuid")
+                .param(key).query(String.class).optional().ifPresent(stateSeenByProvider::set);
+            jdbcClient.sql("SELECT idempotency_key FROM journal_entries WHERE type = 'PAYOUT_RESERVE' AND reference_id = ?")
+                .param(key).query(String.class).optional().ifPresent(reserveEntrySeenByProvider::set);
+        });
 
         long[] wallet = fundedWallet(10_000);
         Payout payout = payoutService.requestPayout(Actors.freelancer(wallet[0]), wallet[0], wallet[1], 1_000, "reg-t1-" + UUID.randomUUID());
@@ -53,19 +58,22 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
         assertThat(stateSeenByProvider.get())
             .as("a crash after the provider call must not be able to lose the reservation")
             .isEqualTo("RESERVED");
+        assertThat(reserveEntrySeenByProvider.get())
+            .as("the reservation's ledger entry is committed with it")
+            .isEqualTo("payout:reserve:" + payout.id());
         assertThat(payoutRepository.findById(payout.id()).orElseThrow().state()).isEqualTo(PayoutState.CONFIRMED);
     }
 
     @Test
     @DisplayName("the provider receives X-Payout-Idempotency-Key = payout id, exactly once")
     void providerGetsIdempotencyKey() {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
         long[] wallet = fundedWallet(10_000);
 
         Payout payout = payoutService.requestPayout(Actors.freelancer(wallet[0]), wallet[0], wallet[1], 2_500, "reg-key-" + UUID.randomUUID());
 
-        // The fake answers 400 without the header, which used to turn every payout into FAILED.
-        assertThat(PROVIDER.records()).containsKey(payout.id().toString());
+        // The provider answers 400 without the header, which used to turn every payout into FAILED.
+        assertThat(PROVIDER.byKey(payout.id().toString()))
+            .hasValueSatisfying(r -> assertThat(r.amountPaise()).isEqualTo(2_500));
         assertThat(PROVIDER.postCount(payout.id().toString())).isEqualTo(1);
         assertThat(payout.state()).isEqualTo(PayoutState.CONFIRMED);
         assertThat(accountRepository.findById(wallet[1]).orElseThrow().balance()).isEqualTo(7_500);
@@ -74,7 +82,6 @@ class PayoutSagaRegressionIT extends AbstractToxiproxyIT {
     @Test
     @DisplayName("concurrent payouts from one wallet do not deadlock")
     void concurrentPayoutsFromOneWalletDoNotDeadlock() throws Exception {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
         long[] wallet = fundedWallet(1_000_000);
         List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
 

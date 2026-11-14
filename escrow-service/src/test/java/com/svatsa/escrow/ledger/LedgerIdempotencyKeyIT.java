@@ -1,6 +1,6 @@
 package com.svatsa.escrow.ledger;
 
-import com.svatsa.escrow.chaos.FakePayoutProvider;
+import com.svatsa.escrow.test.ProviderControl;
 import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.Money;
 import com.svatsa.escrow.dispute.DisputeService;
@@ -179,7 +179,7 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("payout reserve and confirm: payout:reserve|confirm:{id}, one entry each")
     void payoutConfirm() throws Exception {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(ProviderControl.Mode.SUCCESS);
         earn();
         long wallet = accountId("FREELANCER_WALLET:" + freelancer);
         long before = balance("FREELANCER_WALLET:" + freelancer);
@@ -202,7 +202,7 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("payout reverse and cancel share payout:reverse:{id}, one entry")
     void payoutReverse() throws Exception {
-        PROVIDER.reset(FakePayoutProvider.Mode.FAIL, 1, 0);
+        PROVIDER.setMode(ProviderControl.Mode.FAIL);
         earn();
         long wallet = accountId("FREELANCER_WALLET:" + freelancer);
         long before = balance("FREELANCER_WALLET:" + freelancer);

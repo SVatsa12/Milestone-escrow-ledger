@@ -1,8 +1,7 @@
 package com.svatsa.escrow.payouts;
 
 import com.svatsa.escrow.test.Actors;
-import com.svatsa.escrow.chaos.FakePayoutProvider;
-import com.svatsa.escrow.chaos.FakePayoutProvider.Mode;
+import com.svatsa.escrow.test.ProviderControl.Mode;
 import com.svatsa.escrow.ledger.AccountRepository;
 import com.svatsa.escrow.ledger.AccountType;
 import com.svatsa.escrow.ledger.LedgerService;
@@ -15,9 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -28,16 +24,23 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
- * P11: the payout saga against the in-process provider in every mode. (The provider runs in
- * this JVM behind Toxiproxy rather than as a container: the mock-payout-provider module is
- * still empty, and an in-JVM fake lets tests read the provider's records directly.)
+ * P11: the payout saga against the real mock-payout-provider in every mode. The provider runs in
+ * this JVM, behind Toxiproxy, and is driven only through {@code PROVIDER} (ProviderControl).
  */
 @DisplayName("Payout saga (P11)")
 class PayoutSagaIT extends AbstractIntegrationTest {
 
     private static final long AMOUNT = 1_000;
+
+    /** The TIMEOUT_* modes' delay: just past escrow's 2s read timeout (AbstractIntegrationTest). */
+    private static final long TIMEOUT_DELAY_MS = 2_500;
+
+    /** ASYNC seeds (first draw after a mode change): 158 settles SUCCESS after 5.0s, 3187 FAILED after 5.08s. */
+    private static final long ASYNC_SUCCESS_SEED = 158;
+    private static final long ASYNC_FAILED_SEED = 3187;
 
     @Autowired private PayoutService payoutService;
     @Autowired private PayoutRepository payoutRepository;
@@ -62,7 +65,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("SUCCESS → CONFIRMED; wallet down, EXTERNAL_BANK:PAYOUTS up")
     void successConfirms() {
-        PROVIDER.reset(Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(Mode.SUCCESS);
         long bankBefore = balance("EXTERNAL_BANK:PAYOUTS");
 
         Payout p = request();
@@ -75,7 +78,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("FAIL → FAILED; wallet restored")
     void failReverses() {
-        PROVIDER.reset(Mode.FAIL, 1, 0);
+        PROVIDER.setMode(Mode.FAIL);
         Payout p = request();
         assertThat(p.state()).isEqualTo(PayoutState.FAILED);
         assertThat(wallet()).isEqualTo(500_000);
@@ -84,7 +87,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("TIMEOUT_THEN_SUCCEED → UNKNOWN; recovery → CONFIRMED; one provider record, no reverse entry")
     void timeoutThenSucceedIsRecoveredWithoutRetrying() {
-        PROVIDER.reset(Mode.TIMEOUT_THEN_SUCCEED, 1, 0);
+        PROVIDER.setMode(Mode.TIMEOUT_THEN_SUCCEED, TIMEOUT_DELAY_MS, null, 1L);
         Payout p = request();
         assertThat(p.state()).isEqualTo(PayoutState.UNKNOWN);
 
@@ -93,7 +96,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
 
         assertThat(state(p)).isEqualTo(PayoutState.CONFIRMED);
         assertThat(PROVIDER.postCount(p.id().toString())).as("never POSTed again").isEqualTo(1);
-        assertThat(PROVIDER.records()).containsKey(p.id().toString());
+        assertThat(PROVIDER.byKey(p.id().toString())).hasValueSatisfying(r -> assertThat(r.status()).isEqualTo("SUCCESS"));
         assertThat(entries(p, "PAYOUT_REVERSE") + entries(p, "PAYOUT_CANCEL")).isZero();
         assertThat(wallet()).isEqualTo(500_000 - AMOUNT);
     }
@@ -101,7 +104,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("TIMEOUT_THEN_FAIL → UNKNOWN → FAILED; wallet restored")
     void timeoutThenFailReverses() {
-        PROVIDER.reset(Mode.TIMEOUT_THEN_FAIL, 1, 0);
+        PROVIDER.setMode(Mode.TIMEOUT_THEN_FAIL, TIMEOUT_DELAY_MS, null, 1L);
         Payout p = request();
         assertThat(p.state()).isEqualTo(PayoutState.UNKNOWN);
 
@@ -115,7 +118,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("TIMEOUT_NOT_RECEIVED → UNKNOWN → after 2 min the key is tombstoned → CANCELLED; a late POST gets 409")
     void lostRequestIsTombstonedAndALateRequestIsRejected() throws Exception {
-        PROVIDER.reset(Mode.TIMEOUT_NOT_RECEIVED, 1, 0);
+        PROVIDER.setMode(Mode.TIMEOUT_NOT_RECEIVED, TIMEOUT_DELAY_MS, null, 1L);
         Payout p = request();
         assertThat(p.state()).isEqualTo(PayoutState.UNKNOWN);
 
@@ -126,20 +129,16 @@ class PayoutSagaIT extends AbstractIntegrationTest {
         assertThat(wallet()).isEqualTo(500_000);
 
         // The original request finally arrives: the tombstone makes it harmless.
-        HttpResponse<String> late = HttpClient.newHttpClient().send(
-            HttpRequest.newBuilder(URI.create("http://localhost:" + PROVIDER.port() + "/v1/payouts"))
-                .header("Content-Type", "application/json")
-                .header(PayoutProviderClient.IDEMPOTENCY_HEADER, p.id().toString())
-                .POST(HttpRequest.BodyPublishers.ofString("{\"beneficiary\":\"late\",\"amountPaise\":" + AMOUNT + "}"))
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
+        PROVIDER.setMode(Mode.SUCCESS);
+        HttpResponse<String> late = PROVIDER.postPayout(p.id().toString(), "late", AMOUNT);
         assertThat(late.statusCode()).isEqualTo(409);
+        assertThat(PROVIDER.byKey(p.id().toString())).hasValueSatisfying(r -> assertThat(r.status()).isEqualTo("CANCELLED"));
     }
 
     @Test
     @DisplayName("ERROR_500 → UNKNOWN → status 404 → tombstone → CANCELLED")
     void error500EndsCancelled() {
-        PROVIDER.reset(Mode.ERROR_500, 1, 0);
+        PROVIDER.setMode(Mode.ERROR_500);
         Payout p = request();
         assertThat(p.state()).isEqualTo(PayoutState.UNKNOWN);
 
@@ -153,7 +152,7 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("a payout stuck in RESERVED (crash before the provider call) is resolved by the job")
     void stuckReservedIsResolved() {
-        PROVIDER.reset(Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(Mode.SUCCESS);
         UUID id = UUID.randomUUID();
         long inFlight = accountRepository.findByCode("PAYOUT_IN_FLIGHT").orElseThrow().id();
         // T1 only, exactly as PayoutService commits it, and then "the process dies".
@@ -173,14 +172,15 @@ class PayoutSagaIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("two recovery jobs in parallel over 100 UNKNOWN payouts → each settles exactly once")
     void parallelRecoverySettlesEachPayoutOnce() throws Exception {
-        PROVIDER.reset(Mode.ERROR_500, 1, 0);
+        PROVIDER.setMode(Mode.ERROR_500);
         List<Payout> payouts = new ArrayList<>();
         for (int i = 0; i < 100; i++) {
             payouts.add(request());
         }
         assertThat(payouts).allSatisfy(p -> assertThat(p.state()).isEqualTo(PayoutState.UNKNOWN));
-        // The provider did pay them after all.
-        payouts.forEach(p -> PROVIDER.putRecord(p.id().toString(), "SUCCESS", AMOUNT));
+        // The provider did pay them after all: the same keys arrive again and are paid.
+        PROVIDER.setMode(Mode.SUCCESS);
+        payouts.forEach(p -> assertThat(PROVIDER.postPayout(p.id().toString(), "late", AMOUNT).statusCode()).isEqualTo(200));
         long bankBefore = balance("EXTERNAL_BANK:PAYOUTS");
 
         for (int round = 0; round < 5 && payouts.stream().anyMatch(p -> !state(p).isTerminal()); round++) {
@@ -198,7 +198,52 @@ class PayoutSagaIT extends AbstractIntegrationTest {
         assertThat(balance("EXTERNAL_BANK:PAYOUTS") - bankBefore).isEqualTo(100 * AMOUNT);
     }
 
+    @Test
+    @DisplayName("ASYNC → PROCESSING; the provider settles SUCCESS seconds later; recovery → CONFIRMED")
+    void asyncSuccessIsConfirmedByRecovery() {
+        PROVIDER.setMode(Mode.ASYNC, null, null, ASYNC_SUCCESS_SEED);
+        long bankBefore = balance("EXTERNAL_BANK:PAYOUTS");
+        Payout p = request();
+        assertThat(p.state()).isEqualTo(PayoutState.PROCESSING);
+        assertThat(wallet()).as("reserved while processing").isEqualTo(500_000 - AMOUNT);
+
+        recoverUntilTerminal(p);
+
+        assertThat(state(p)).isEqualTo(PayoutState.CONFIRMED);
+        assertThat(PROVIDER.byKey(p.id().toString())).hasValueSatisfying(r -> assertThat(r.status()).isEqualTo("SUCCESS"));
+        assertThat(entries(p, "PAYOUT_CONFIRM")).isEqualTo(1);
+        assertThat(balance("EXTERNAL_BANK:PAYOUTS") - bankBefore).isEqualTo(AMOUNT);
+        assertThat(PROVIDER.postCount(p.id().toString())).as("never POSTed again").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("ASYNC → PROCESSING; the provider settles FAILED (the 10%); recovery → FAILED, wallet restored")
+    void asyncFailureIsReversedByRecovery() {
+        PROVIDER.setMode(Mode.ASYNC, null, null, ASYNC_FAILED_SEED);
+        Payout p = request();
+        assertThat(p.state()).isEqualTo(PayoutState.PROCESSING);
+
+        recoverUntilTerminal(p);
+
+        assertThat(state(p)).isEqualTo(PayoutState.FAILED);
+        assertThat(PROVIDER.byKey(p.id().toString())).hasValueSatisfying(r -> assertThat(r.status()).isEqualTo("FAILED"));
+        assertThat(entries(p, "PAYOUT_REVERSE")).isEqualTo(1);
+        assertThat(wallet()).isEqualTo(500_000);
+    }
+
     // --- helpers -----------------------------------------------------------------------------
+
+    /**
+     * The provider settles ASYNC payouts on its own (wall) clock, 5-15s after accepting them. Keep
+     * running the recovery job, moving escrow's clock past each backoff, until the payout is done.
+     */
+    private void recoverUntilTerminal(Payout p) {
+        await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(500)).untilAsserted(() -> {
+            clock.advance(Duration.ofMinutes(11));   // past the longest backoff (600s)
+            recoveryJob.runOnce();
+            assertThat(state(p).isTerminal()).as("payout " + p.id() + " is " + state(p)).isTrue();
+        });
+    }
 
     private Payout request() {
         return payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletId, AMOUNT, "saga-" + UUID.randomUUID());

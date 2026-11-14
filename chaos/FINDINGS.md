@@ -418,17 +418,42 @@ These were listed as open issues below; each is now closed with its own tests.
   ADMIN, the admin claiming CLIENT, a freelancer claiming CLIENT; all 401, nothing changes),
   `unknownActorIs401`.
 
+### 40. escrow-service's tests ran against a hand-written stub, not the provider — closed
+- **Gap:** every payout test (saga, regressions, reconciliation, C1/C2) talked to an in-JVM stub
+  that only resembled `mock-payout-provider`: it settled PROCESSING payouts the moment anyone asked,
+  refused to cancel a PROCESSING payout, delayed every answer in C2, had no ASYNC mode, and let tests
+  rewrite its records directly. Tests could pass against behaviour the real provider doesn't have.
+- **Fix:** `AbstractIntegrationTest` starts the real `mock-payout-provider` once per test JVM, in
+  its own Spring context on a random port, against the shared Postgres container (schema
+  `provider`, its own Flyway), behind Toxiproxy as before. Tests drive it only through
+  `test.ProviderControl` (its real HTTP API: modes, reset, by-key, settlements, a direct POST), plus
+  the provider's test-only `PayoutRequestObserver`, which counts POSTs per key and lets
+  `PayoutSagaRegressionIT` look at escrow's DB the instant a request arrives. The stub is deleted.
+  - Two Boot apps in one JVM clashed: both modules kept migrations in `classpath:db/migration`
+    (each Flyway saw the other's V0/V1; the provider's now live in `db/provider`), and
+    `classpath:application.yml` resolved to escrow's file, so the provider context loads no config
+    file and gets its settings explicitly, with Kafka/Redis auto-configuration excluded.
+  - The provider's Boot plugin now writes the runnable jar as `-exec.jar` (its Dockerfile uses it),
+    so the plain jar can be a test dependency; escrow-service's Dockerfile builds through the reactor,
+    because Maven resolves test-scoped dependencies even with `-DskipTests` (the old one now failed).
+- **Migrated:** `PayoutSagaIT` (TIMEOUT modes use `delayMs` 2.5s against the 2s read timeout; the
+  "provider paid after all" case is a real late POST; new ASYNC tests settle SUCCESS and FAILED via
+  the recovery job with seeds 158 and 3187), `PayoutSagaRegressionIT` (the observer also checks the
+  `payout:reserve` entry is committed), `ReconciliationIT` (amount drift is an UPDATE on
+  `provider.payouts`), C2 (RANDOM over TIMEOUT_THEN_* with 150ms, ASYNC and ERROR_500, keeping the
+  "paid, answer lost" window; the 1:1 check uses settlements plus by-key), `AuthorizationIT`,
+  `LedgerIdempotencyKeyIT`, `LoadPathApiIT`.
+- **C1 never ran:** it was `@Disabled`, never touched Toxiproxy, and paid out from account 1 for
+  freelancer 42. It now does what its javadoc says: 3s of latency, 100 payouts all UNKNOWN, recovery
+  confirms all 100 with one POST each and no reverse entries.
+- **Saga bugs found by the real provider: none.** Every payout test and C1/C2 passed against it
+  unchanged in substance; the stub's differences hadn't been hiding a saga defect.
+
 ## Open issues (not fixed yet)
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
   - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
-- **escrow-service's tests still use the in-JVM `FakePayoutProvider`.** `mock-payout-provider`
-  now exists (port 9090, schema `provider`, modes set via `POST /admin/mode`, its own tests in
-  `./mvnw verify`, in the compose `app` profile behind Toxiproxy's 19090), but no escrow-service
-  test talks to it yet. Moving them over is the next task. While building it, compose was found to
-  mount a `toxiproxy-config.json` that didn't exist; it now defines the `postgres` (15432) and
-  `provider` (19090) proxies.
 - **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
   so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.
 

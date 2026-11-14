@@ -1,138 +1,134 @@
 package com.svatsa.escrow.chaos;
 
-import com.svatsa.escrow.test.Actors;
+import com.svatsa.escrow.ledger.AccountRepository;
+import com.svatsa.escrow.ledger.AccountType;
+import com.svatsa.escrow.ledger.LedgerService;
+import com.svatsa.escrow.ledger.Leg;
+import com.svatsa.escrow.ledger.PostingRequest;
+import com.svatsa.escrow.payouts.Payout;
+import com.svatsa.escrow.payouts.PayoutRecoveryJob;
 import com.svatsa.escrow.payouts.PayoutRepository;
 import com.svatsa.escrow.payouts.PayoutService;
 import com.svatsa.escrow.payouts.PayoutState;
-import com.svatsa.escrow.recon.InvariantChecker;
-import com.svatsa.escrow.test.AbstractIntegrationTest;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
+import com.svatsa.escrow.test.Actors;
+import com.svatsa.escrow.test.ProviderControl;
+import eu.rekawek.toxiproxy.model.ToxicDirection;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-// import org.testcontainers.toxiproxy.ToxiproxyClient;
-// import org.testcontainers.toxiproxy.ToxiproxyContainer;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * C1: Provider latency chaos test.
+ * C1: provider latency.
  *
- * Scenario:
- * - Inject 3000ms latency on payout provider proxy (above 2s read timeout)
- * - Request 100 payouts → all should go to UNKNOWN state (timeout)
- * - Remove latency and run recovery job
- * - All payouts should become CONFIRMED
- * - No reverse entries should exist
- * - Invariants must be clean
+ * <ul>
+ *   <li>3000ms of downstream latency on the provider proxy, above escrow's 2s read timeout. The
+ *       provider (SUCCESS mode) pays at once; escrow never hears back in time.</li>
+ *   <li>100 payouts: every one must end UNKNOWN, never CONFIRMED or FAILED by guesswork, and never
+ *       be retried (invariant 12).</li>
+ *   <li>The latency goes away; the recovery job asks the provider and confirms every payout.</li>
+ *   <li>Pass: all 100 CONFIRMED, no reverse entries, one POST per key, the provider settled exactly
+ *       what the ledger confirmed, InvariantChecker clean (the @AfterEach checks it too).</li>
+ * </ul>
  *
- * Tests that the system correctly handles provider timeouts and recovery.
+ * This used to be a @Disabled template that never touched Toxiproxy and paid out from account 1
+ * for freelancer 42 (which the actor checks now reject). It runs for real now.
  */
-@Tag("chaos")
-@Disabled("Requires Toxiproxy with Testcontainers; enable in CI")
-@SpringBootTest
-@ActiveProfiles("test")
-@DisplayName("C1: Provider Latency Chaos Test")
-class C1ProviderLatencyChaosIT extends AbstractIntegrationTest {
+@DisplayName("C1: provider latency")
+class C1ProviderLatencyChaosIT extends AbstractChaosIT {
 
-    @Autowired
-    private PayoutService payoutService;
+    private static final int PAYOUTS = 100;
+    private static final int WORKERS = 20;
+    private static final long AMOUNT = 10_000;
 
-    @Autowired
-    private PayoutRepository payoutRepository;
-
-    @Autowired
-    private InvariantChecker invariantChecker;
-
-    // ToxiproxyContainer would be provided by test infrastructure
-    // For now, this is a template; actual toxiproxy setup is in docker-compose with profile "chaos"
-
-    private static final int PAYOUT_COUNT = 100;
-    private static final long FREELANCER_ID = 42L;
-    private static final long WALLET_ACCOUNT_ID = 1L;
-    private static final long PAYOUT_AMOUNT = 100_00; // 100 rupees in paise
-
-    @BeforeEach
-    void setUp() {
-        // In a real chaos setup, Toxiproxy would be configured here
-    }
+    @Autowired private PayoutService payoutService;
+    @Autowired private PayoutRepository payoutRepository;
+    @Autowired private PayoutRecoveryJob recoveryJob;
+    @Autowired private AccountRepository accountRepository;
+    @Autowired private LedgerService ledgerService;
+    @Autowired private TransactionTemplate tx;
 
     @Test
-    @DisplayName("Should timeout payouts with 3000ms latency, then recover to CONFIRMED")
-    void shouldHandleProviderLatencyAndRecover() throws Exception {
-        // Part 1: Request payouts with latency enabled (3000ms > 2s timeout)
-        // All should go to UNKNOWN
-        long startTime = System.currentTimeMillis();
+    @DisplayName("timeouts end UNKNOWN, recovery confirms every payout exactly once")
+    void latencyThenRecovery() throws Exception {
+        long freelancerId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
+        long walletId = accountRepository.create("FREELANCER_WALLET:" + freelancerId,
+            AccountType.FREELANCER_WALLET, freelancerId, false).id();
+        fund(walletId, PAYOUTS * AMOUNT);
+        long bankBefore = balance("EXTERNAL_BANK:PAYOUTS");
 
-        for (int i = 0; i < PAYOUT_COUNT; i++) {
-            var payout = payoutService.requestPayout(
-                Actors.freelancer(FREELANCER_ID), FREELANCER_ID,
-                WALLET_ACCOUNT_ID,
-                PAYOUT_AMOUNT,
-                "payout-latency-" + i
-            );
-            // Payout should be in RESERVED or UNKNOWN after the request
-            // (depends on timing of provider timeout)
+        // --- Latency on: every answer arrives after the client gave up -----------------------
+        PROVIDER_PROXY.toxics().latency("c1-latency", ToxicDirection.DOWNSTREAM, 3_000);
+        List<UUID> ids = Collections.synchronizedList(new ArrayList<>());
+        try (ExecutorService pool = Executors.newFixedThreadPool(WORKERS)) {
+            List<Future<?>> calls = new ArrayList<>();
+            for (int i = 0; i < PAYOUTS; i++) {
+                final int n = i;
+                calls.add(pool.submit(() -> ids.add(payoutService.requestPayout(
+                    Actors.freelancer(freelancerId), freelancerId, walletId, AMOUNT, "c1-" + n).id())));
+            }
+            for (Future<?> f : calls) {
+                f.get(2, TimeUnit.MINUTES);
+            }
         }
+        assertThat(ids).hasSize(PAYOUTS);
+        assertThat(ids).as("a timeout is UNKNOWN, never a guess").allSatisfy(id -> assertThat(state(id)).isEqualTo(PayoutState.UNKNOWN));
+        assertThat(balance("EXTERNAL_BANK:PAYOUTS")).as("nothing confirmed yet").isEqualTo(bankBefore);
+        // The bank did pay every one of them.
+        assertThat(ids).allSatisfy(id -> assertThat(PROVIDER.byKey(id.toString()))
+            .hasValueSatisfying(r -> assertThat(r.status()).isEqualTo("SUCCESS")));
 
-        long part1Duration = System.currentTimeMillis() - startTime;
-        System.out.println("Part 1 (request with latency): " + part1Duration + "ms");
+        // --- Latency off: recovery asks, never re-POSTs -----------------------------------------
+        removeAllToxics(PROVIDER_PROXY);
+        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofMillis(200)).until(() -> {
+            clock.advance(Duration.ofMinutes(1));
+            recoveryJob.runOnce();
+            return ids.stream().allMatch(id -> state(id).isTerminal());
+        });
 
-        // Part 2: Check that payouts are in UNKNOWN or terminal states
-        // Due to timeout, most should be UNKNOWN
-        var allPayouts = payoutRepository.findAllInFlightOrCompleted();
-        long unknownCount = allPayouts.stream()
-            .filter(p -> p.state() == PayoutState.UNKNOWN)
-            .count();
+        assertThat(ids).allSatisfy(id -> assertThat(state(id)).isEqualTo(PayoutState.CONFIRMED));
+        assertThat(ids).allSatisfy(id -> assertThat(PROVIDER.postCount(id.toString())).as("POSTs for " + id).isEqualTo(1));
+        assertThat(jdbcClient.sql("SELECT count(*) FROM journal_entries WHERE reference_type = 'PAYOUT' AND reference_id IN ("
+                + String.join(",", ids.stream().map(id -> "'" + id + "'").toList())
+                + ") AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')")
+            .query(Long.class).single()).as("no reverse entries").isZero();
 
-        System.out.println("After latency injection: " + unknownCount + " payouts in UNKNOWN");
-        assertThat(unknownCount).isGreaterThan(0);
+        LocalDate todayIst = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        long providerSettled = PROVIDER.settlements(todayIst.minusDays(1)).stream().mapToLong(ProviderControl.Record::amountPaise).sum()
+            + PROVIDER.settlements(todayIst).stream().mapToLong(ProviderControl.Record::amountPaise).sum();
+        assertThat(providerSettled).as("provider settled").isEqualTo(PAYOUTS * AMOUNT);
+        assertThat(balance("EXTERNAL_BANK:PAYOUTS") - bankBefore).as("ledger confirmed").isEqualTo(PAYOUTS * AMOUNT);
+        assertThat(accountRepository.findById(walletId).orElseThrow().balance()).isZero();
+        assertThat(invariantChecker.check()).isEmpty();
+    }
 
-        // Part 3: Remove latency (Toxiproxy toxic removed)
-        // In a real test, this would call toxiProxy.getEndpoint().removeToxic(...)
-        System.out.println("(Simulating: removing latency toxic)");
+    private PayoutState state(UUID id) {
+        return payoutRepository.findById(id).map(Payout::state).orElseThrow();
+    }
 
-        // Part 4: Run recovery job (poll every 10s, exponential backoff)
-        // This would call payoutRecoveryJob.runOnce() multiple times or wait for scheduler
-        System.out.println("(Simulating: running recovery job)");
+    private void fund(long walletId, long amount) {
+        long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
+        tx.executeWithoutResult(s -> ledgerService.post(new PostingRequest(
+            "TEST_SEED", "TEST_SEED", String.valueOf(walletId), "c1-seed:" + UUID.randomUUID(), "C1 seed",
+            List.of(new Leg(bank, -amount), new Leg(walletId, amount)))));
+    }
 
-        // Part 5: Wait for all payouts to become terminal
-        await()
-            .pollDelay(java.time.Duration.ofMillis(100))
-            .timeout(java.time.Duration.ofSeconds(30))
-            .until(() -> {
-                var payouts = payoutRepository.findAllInFlightOrCompleted();
-                return payouts.stream()
-                    .allMatch(p -> p.state() == PayoutState.CONFIRMED || 
-                                   p.state() == PayoutState.FAILED ||
-                                   p.state() == PayoutState.CANCELLED);
-            });
-
-        // Part 6: Verify final state
-        var finalPayouts = payoutRepository.findAllInFlightOrCompleted();
-        assertThat(finalPayouts).hasSize(PAYOUT_COUNT);
-
-        long confirmedCount = finalPayouts.stream()
-            .filter(p -> p.state() == PayoutState.CONFIRMED)
-            .count();
-
-        System.out.println("After recovery: " + confirmedCount + " CONFIRMED, " +
-            (PAYOUT_COUNT - confirmedCount) + " other states");
-
-        // All should be CONFIRMED (provider returned SUCCESS)
-        assertThat(confirmedCount).isEqualTo(PAYOUT_COUNT);
-
-        // Part 7: Verify invariants
-        var violations = invariantChecker.check();
-        assertThat(violations).isEmpty();
-
-        System.out.println("C1 PASSED: All payouts recovered to CONFIRMED, zero violations");
+    private long balance(String code) {
+        return accountRepository.findByCode(code).orElseThrow().balance();
     }
 }

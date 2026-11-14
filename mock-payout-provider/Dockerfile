@@ -25,7 +25,7 @@ RUN addgroup -g 1000 provider && \
 WORKDIR /app
 
 # Copy JAR from builder
-COPY --from=builder /build/target/mock-payout-provider-*.jar app.jar
+COPY --from=builder /build/target/mock-payout-provider-*-exec.jar app.jar
 
 # Set ownership
 RUN chown -R provider:provider /app

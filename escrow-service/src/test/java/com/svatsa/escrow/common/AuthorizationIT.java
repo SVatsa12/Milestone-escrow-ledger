@@ -1,7 +1,7 @@
 package com.svatsa.escrow.common;
 
+import com.svatsa.escrow.test.ProviderControl;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.svatsa.escrow.chaos.FakePayoutProvider;
 import com.svatsa.escrow.escrow.AutoReleaseJob;
 import com.svatsa.escrow.escrow.MilestoneRepository;
 import com.svatsa.escrow.escrow.MilestoneRepository.Transition;
@@ -202,7 +202,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("payout: the freelancer themselves; clients and admins are 403")
     void payout() throws Exception {
-        PROVIDER.reset(FakePayoutProvider.Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(ProviderControl.Mode.SUCCESS);
         approve(submittedMilestone(clientA, freelancerA, 10_000), clientA);
         long before = walletBalance("FREELANCER_WALLET:" + freelancerA);
 

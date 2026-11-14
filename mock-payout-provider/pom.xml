@@ -83,6 +83,12 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The runnable fat jar is mock-payout-provider-*-exec.jar (the Dockerfile uses it).
+                         The main artifact stays a plain jar, so escrow-service's tests can depend on it
+                         and start the provider in-process. -->
+                    <classifier>exec</classifier>
+                </configuration>
             </plugin>
         </plugins>
     </build>

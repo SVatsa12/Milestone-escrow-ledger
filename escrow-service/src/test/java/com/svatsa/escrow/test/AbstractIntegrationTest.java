@@ -1,6 +1,5 @@
 package com.svatsa.escrow.test;
 
-import com.svatsa.escrow.chaos.FakePayoutProvider;
 import com.svatsa.escrow.common.Actor;
 import com.svatsa.escrow.common.Role;
 import com.svatsa.escrow.recon.InvariantChecker;
@@ -9,6 +8,7 @@ import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import eu.rekawek.toxiproxy.model.Toxic;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -40,13 +40,20 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <pre>
  *   escrow-service (this JVM) ──JDBC──▶ toxiproxy:8666 ──▶ postgres:5432
- *   escrow-service (this JVM) ──HTTP──▶ toxiproxy:8667 ──▶ FakePayoutProvider (this JVM)
+ *   escrow-service (this JVM) ──HTTP──▶ toxiproxy:8667 ──▶ mock-payout-provider (this JVM, own context)
+ *   mock-payout-provider      ──JDBC──────────────────────▶ postgres:5432, schema "provider"
  * </pre>
- * Toxiproxy is a pass-through unless a chaos scenario adds toxics, so ordinary tests see a plain
- * database; chaos tests reach the same proxies through {@link #PG_PROXY} / {@link #PROVIDER_PROXY}.
+ * The provider is the real mock-payout-provider module, started once per JVM in its own Spring
+ * context on a random port ({@link ProviderControl}, which also explains the two-apps-in-one-JVM
+ * clashes and how they're avoided). Tests control it only through {@link #PROVIDER}.
  *
- * After every test: all toxics are removed, the clock is reset, and
- * {@link InvariantChecker#check()} must be empty. A test that leaves the ledger inconsistent fails.
+ * Toxiproxy is a pass-through unless a chaos scenario adds toxics, so ordinary tests see a plain
+ * database and provider; chaos tests reach the same proxies through {@link #PG_PROXY} /
+ * {@link #PROVIDER_PROXY}.
+ *
+ * Before every test the provider is reset (no payouts) and set to SUCCESS. After every test: all
+ * toxics are removed, the clock is reset, and {@link InvariantChecker#check()} must be empty. A
+ * test that leaves the ledger inconsistent fails.
  *
  * This class used to boot an H2 "test" profile with Flyway off, so the schema never existed and
  * every integration test written against it from P3 on was @Disabled.
@@ -66,8 +73,6 @@ public abstract class AbstractIntegrationTest {
     private static final int PG_PROXY_PORT = 8666;
     private static final int PROVIDER_PROXY_PORT = 8667;
 
-    protected static final FakePayoutProvider PROVIDER = FakePayoutProvider.start();
-
     private static final Network NETWORK = Network.newNetwork();
 
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16")
@@ -75,7 +80,10 @@ public abstract class AbstractIntegrationTest {
         .withNetworkAliases("postgres")
         .withDatabaseName("escrow")
         .withUsername("escrow")
-        .withPassword("escrow");
+        .withPassword("escrow")
+        // Every cached Spring test context keeps a 30-connection Hikari pool open (min idle = max),
+        // and the in-process payout provider has its own: the default 100 ran out.
+        .withCommand("postgres", "-c", "max_connections=300");
 
     private static final ToxiproxyContainer TOXIPROXY = new ToxiproxyContainer("ghcr.io/shopify/toxiproxy:2.5.0")
         .withNetwork(NETWORK);
@@ -84,13 +92,19 @@ public abstract class AbstractIntegrationTest {
 
     private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7").withExposedPorts(6379);
 
+    /** The real payout provider (in this JVM). */
+    protected static final ProviderControl PROVIDER;
+
     protected static final Proxy PG_PROXY;
     protected static final Proxy PROVIDER_PROXY;
 
     static {
+        // Postgres first: the provider needs it (its own schema, its own Flyway) before it can start.
+        POSTGRES.start();
+        PROVIDER = ProviderControl.start(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
         // Must happen before Toxiproxy starts so it gets the host.testcontainers.internal route.
         Testcontainers.exposeHostPorts(PROVIDER.port());
-        Startables.deepStart(POSTGRES, TOXIPROXY, KAFKA, REDIS).join();
+        Startables.deepStart(TOXIPROXY, KAFKA, REDIS).join();
         try {
             ToxiproxyClient client = new ToxiproxyClient(TOXIPROXY.getHost(), TOXIPROXY.getControlPort());
             PG_PROXY = client.createProxy("postgres", "0.0.0.0:" + PG_PROXY_PORT, "postgres:5432");
@@ -144,6 +158,13 @@ public abstract class AbstractIntegrationTest {
 
     @LocalServerPort
     protected int serverPort;
+
+    /** Every test starts with an empty provider in SUCCESS mode (seed 1). */
+    @BeforeEach
+    void resetProvider() {
+        PROVIDER.reset();
+        PROVIDER.setMode(ProviderControl.Mode.SUCCESS);
+    }
 
     /**
      * Runs after every integration test (JUnit runs a superclass @AfterEach after the subclass's).

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,11 +33,15 @@ public class PayoutService {
     private final PayoutRepository repository;
     private final ModeState modeState;
     private final Clock clock;
+    private final PayoutRequestObserver observer;
 
-    public PayoutService(PayoutRepository repository, ModeState modeState, Clock clock) {
+    public PayoutService(PayoutRepository repository, ModeState modeState, Clock clock,
+                         ObjectProvider<PayoutRequestObserver> observer) {
         this.repository = repository;
         this.modeState = modeState;
         this.clock = clock;
+        // Test-only hook; absent in every real deployment.
+        this.observer = observer.getIfAvailable(() -> PayoutRequestObserver.NONE);
     }
 
     /** An HTTP status and body. */
@@ -47,6 +52,7 @@ public class PayoutService {
      * answered with the status code that row means (see {@link #replay}).
      */
     public Reply requestPayout(String key, String beneficiary, long amountPaise) {
+        observer.onPayoutRequest(key);
         var existing = repository.findByKey(key);
         if (existing.isPresent()) {
             return replay(existing.get());

@@ -3,17 +3,17 @@ FROM eclipse-temurin:21-jdk-alpine AS builder
 
 WORKDIR /build
 
-# Copy Maven files
-COPY escrow-service/pom.xml .
-COPY pom.xml ../pom.xml
+# Build through the reactor: escrow-service's tests depend on mock-payout-provider (they run it
+# in-process), and Maven resolves test-scoped dependencies even with -DskipTests.
+COPY pom.xml .
+COPY escrow-service/pom.xml escrow-service/
+COPY escrow-service/src escrow-service/src
+COPY mock-payout-provider/pom.xml mock-payout-provider/
+COPY mock-payout-provider/src mock-payout-provider/src
 
-# Copy source code
-COPY escrow-service/src ./src
-
-# Build the application
 RUN --mount=type=cache,target=/root/.m2 \
     apk add --no-cache maven && \
-    mvn -q -B clean package -DskipTests
+    mvn -q -B -pl escrow-service -am clean package -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
@@ -25,7 +25,7 @@ RUN addgroup -g 1000 escrow && \
 WORKDIR /app
 
 # Copy JAR from builder
-COPY --from=builder /build/target/escrow-service-*.jar app.jar
+COPY --from=builder /build/escrow-service/target/escrow-service-*.jar app.jar
 
 # Set ownership
 RUN chown -R escrow:escrow /app

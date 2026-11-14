@@ -1,5 +1,6 @@
 package com.svatsa.escrow.recon;
 
+import com.svatsa.escrow.test.ProviderControl;
 import com.svatsa.escrow.test.Actors;
 import com.svatsa.escrow.payouts.Payout;
 import com.svatsa.escrow.ledger.AccountRepository;
@@ -99,7 +100,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
         );
     }
 
-    // --- P12 behaviour, with real payouts through the saga and the fake provider ---------------
+    // --- P12 behaviour, with real payouts through the saga and the real provider ---------------
     // (Replaces a test that inserted a RESERVED payout row without its reservation posting, which
     // correctly broke I7, and asserted nothing about mismatches.)
 
@@ -118,7 +119,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
     @DisplayName("amount drift at the provider is reported as AMOUNT_MISMATCH")
     void amountDriftIsAmountMismatch() {
         Payout payout = confirmedPayout(2_500);
-        PROVIDER.setAmount(payout.id().toString(), 2_400);
+        providerAmountDrifts(payout, 2_400);
 
         reconService.reconcilePayouts(LocalDate.now());
 
@@ -129,7 +130,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
     @DisplayName("running twice on the same date does not duplicate mismatches")
     void rerunDoesNotDuplicateMismatches() {
         Payout payout = confirmedPayout(2_500);
-        PROVIDER.setAmount(payout.id().toString(), 1);
+        providerAmountDrifts(payout, 1);
 
         reconService.reconcilePayouts(LocalDate.now());
         reconService.reconcilePayouts(LocalDate.now());
@@ -138,7 +139,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
     }
 
     private Payout confirmedPayout(long amount) {
-        PROVIDER.reset(com.svatsa.escrow.chaos.FakePayoutProvider.Mode.SUCCESS, 1, 0);
+        PROVIDER.setMode(ProviderControl.Mode.SUCCESS);
         long bank = accountRepository.findByCode("EXTERNAL_BANK:RAZORPAY").orElseThrow().id();
         seedTx.executeWithoutResult(s -> ledgerService.post(new com.svatsa.escrow.ledger.PostingRequest(
             "TEST_SEED", "TEST_SEED", "recon", "recon-seed:" + UUID.randomUUID(), "seed",
@@ -147,6 +148,13 @@ class ReconciliationIT extends AbstractIntegrationTest {
         Payout payout = payoutService.requestPayout(Actors.freelancer(freelancerId), freelancerId, walletAccountId, amount, "recon-" + UUID.randomUUID());
         assertThat(payout.state()).isEqualTo(PayoutState.CONFIRMED);
         return payout;
+    }
+
+    /** The bank's books drift: change the amount it holds for this payout, straight in its schema. */
+    private void providerAmountDrifts(Payout payout, long amountPaise) {
+        int rows = jdbcClient.sql("UPDATE provider.payouts SET amount_paise = ? WHERE idempotency_key = ?")
+            .param(amountPaise).param(payout.id().toString()).update();
+        assertThat(rows).as("the provider has a record for " + payout.id()).isEqualTo(1);
     }
 
     private java.util.List<ReconMismatch> mismatchesFor(Payout payout) {

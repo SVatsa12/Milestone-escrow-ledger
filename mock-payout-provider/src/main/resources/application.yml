@@ -14,6 +14,9 @@ spring:
   flyway:
     enabled: true
     schemas: provider
+    # Not the default classpath:db/migration: escrow-service's tests run this app in-process, and
+    # with both modules on one classpath each Flyway would see the other's V0/V1 and refuse to start.
+    locations: classpath:db/provider
 
 server:
   port: 9090

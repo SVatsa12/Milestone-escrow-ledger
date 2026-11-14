@@ -37,6 +37,8 @@ import java.util.Optional;
  */
 @Controller
 @RequestMapping("/webhooks/razorpay")
+// RazorpayConfig was never registered, so it was always injected as null and every webhook was a 500.
+@org.springframework.boot.context.properties.EnableConfigurationProperties(RazorpayConfig.class)
 public class DepositWebhookController {
     private static final Logger log = LoggerFactory.getLogger(DepositWebhookController.class);
 
@@ -50,7 +52,7 @@ public class DepositWebhookController {
 
     public DepositWebhookController(
         WebhookSignatureVerifier signatureVerifier,
-        @org.springframework.lang.Nullable RazorpayConfig razorpayConfig,
+        RazorpayConfig razorpayConfig,
         JdbcClient jdbcClient,
         ObjectMapper objectMapper,
         DepositService depositService,

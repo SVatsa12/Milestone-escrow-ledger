@@ -34,6 +34,15 @@ public class WebhookSignatureVerifier {
      * @return true if signature is valid, false otherwise
      */
     public boolean verify(byte[] rawBody, String signature, String secret) {
+        // Fail closed: with no secret configured (or no signature sent) nothing can be verified.
+        // A null secret used to throw NPE and an empty one "Empty key", both surfacing as 500s.
+        if (secret == null || secret.isBlank()) {
+            log.warn("webhook.signature-rejected reason=no-webhook-secret-configured");
+            return false;
+        }
+        if (signature == null || signature.isBlank() || rawBody == null) {
+            return false;
+        }
         try {
             // Compute HMAC-SHA256
             Mac mac = Mac.getInstance(ALGORITHM);

@@ -224,6 +224,14 @@ A rerun reuses the date's run (`UNIQUE (run_date, entity_type)`) and inserted ea
 `ON CONFLICT DO NOTHING`.
 Regression: `ReconciliationIT.rerunDoesNotDuplicateMismatches`.
 
+### 24. Every Razorpay webhook was a 500: the config was never registered
+`RazorpayConfig` (`@ConfigurationProperties`) was never registered, so the controller always got
+`null` (it was injected as `@Nullable`) and threw NullPointerException. With no secret configured,
+`WebhookSignatureVerifier` also threw (NPE for null, "Empty key" for ""), which surfaced as 500s.
+**Fix:** `@EnableConfigurationProperties(RazorpayConfig.class)`; the verifier fails closed (no secret
+or no signature means "invalid", 400).
+Regression: `DepositWebhookIT`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

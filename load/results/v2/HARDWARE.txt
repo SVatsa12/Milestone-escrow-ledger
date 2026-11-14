@@ -1,0 +1,9 @@
+date: 2026-11-14T19:49:20Z
+12th Gen Intel(R) Core(TM) i5-12500H
+cores: 12
+logical: 16
+ram GB: 15.7
+Microsoft Windows 11 Home Single Language
+docker: 16 CPUs, 8164069376 bytes, server 28.4.0
+limits: escrow-service cpus=2 mem=1g; postgres cpus=2 (docker stats CPU% is per core: 200% = the cap)
+k6: grafana/k6:0.54.0 on the same host, unlimited

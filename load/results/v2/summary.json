@@ -1,0 +1,1171 @@
+{
+  "hot-account-200": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 200,
+      "min": 200,
+      "max": 200,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.6113445000000004,
+      "min": 3.586,
+      "max": 3.907629,
+      "n": 3
+    },
+    "p95": {
+      "median": 19.423987,
+      "min": 18.007198649999996,
+      "max": 20.03310129999999,
+      "n": 3
+    },
+    "p99": {
+      "median": 195.49225681999994,
+      "min": 183.158119,
+      "max": 309.33782968999725,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 67.2,
+      "min": 64.3,
+      "max": 68.7,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 197.7,
+      "min": 196.6,
+      "max": 202.5,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 44.4,
+      "min": 38.2,
+      "max": 46.4,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 109.2,
+      "min": 96.1,
+      "max": 164.3,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 52.8,
+      "min": 46.2,
+      "max": 59.0,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 36.4,
+      "min": 32.0,
+      "max": 42.3,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=74"
+      ],
+      [
+        "CONFIRMED=73"
+      ],
+      [
+        "CONFIRMED=76"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "mixed-150": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 150,
+      "min": 150,
+      "max": 150,
+      "n": 3
+    },
+    "p50": {
+      "median": 1.661407,
+      "min": 1.647779,
+      "max": 1.834473,
+      "n": 3
+    },
+    "p95": {
+      "median": 12.939942999999992,
+      "min": 12.595795,
+      "max": 15.041725,
+      "n": 3
+    },
+    "p99": {
+      "median": 22.807704449999935,
+      "min": 20.939144,
+      "max": 27.403744,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 49.6,
+      "min": 47.2,
+      "max": 54.6,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 195.5,
+      "min": 194.6,
+      "max": 197.0,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 19.4,
+      "min": 17.7,
+      "max": 21.2,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 52.4,
+      "min": 51.0,
+      "max": 66.5,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 35.8,
+      "min": 35.0,
+      "max": 37.6,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 15.2,
+      "min": 14.3,
+      "max": 16.6,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=943"
+      ],
+      [
+        "CONFIRMED=944"
+      ],
+      [
+        "CONFIRMED=947"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "replays-200": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 200,
+      "min": 200,
+      "max": 200,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.4555420000000003,
+      "min": 3.148414,
+      "max": 3.628267,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.425088399999997,
+      "min": 6.223903,
+      "max": 8.554739,
+      "n": 3
+    },
+    "p99": {
+      "median": 22.663173109999892,
+      "min": 17.167916,
+      "max": 24.690257,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 61.4,
+      "min": 55.5,
+      "max": 68.0,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 193.2,
+      "min": 188.9,
+      "max": 197.3,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 33.3,
+      "min": 28.3,
+      "max": 35.7,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 96.6,
+      "min": 84.4,
+      "max": 109.8,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 49.0,
+      "min": 42.8,
+      "max": 50.9,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 31.2,
+      "min": 26.6,
+      "max": 32.9,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "n": 3
+    },
+    "payoutStates": [
+      [
+        "CONFIRMED=74"
+      ],
+      [
+        "CONFIRMED=63"
+      ],
+      [
+        "CONFIRMED=60"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "transfers-200": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 200,
+      "min": 200,
+      "max": 200,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.826022,
+      "min": 3.339798,
+      "max": 4.3145095,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.446867,
+      "min": 6.831875,
+      "max": 8.119642499999996,
+      "n": 3
+    },
+    "p99": {
+      "median": 13.806402,
+      "min": 13.13392081,
+      "max": 17.149698,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 70.6,
+      "min": 59.9,
+      "max": 83.6,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 193.7,
+      "min": 177.4,
+      "max": 203.2,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 46.5,
+      "min": 37.0,
+      "max": 51.2,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 95.7,
+      "min": 95.5,
+      "max": 155.3,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 66.0,
+      "min": 55.0,
+      "max": 73.4,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 43.2,
+      "min": 38.5,
+      "max": 46.8,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=75"
+      ],
+      [
+        "CONFIRMED=66"
+      ],
+      [
+        "CONFIRMED=60"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "transfers-250": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.84729,
+      "min": 3.4774725,
+      "max": 4.004767,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.8103390999999975,
+      "min": 7.706454249999995,
+      "max": 8.981845,
+      "n": 3
+    },
+    "p99": {
+      "median": 28.193004060000096,
+      "min": 21.665606,
+      "max": 36.984974050000005,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 84.3,
+      "min": 75.1,
+      "max": 87.0,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 201.4,
+      "min": 198.5,
+      "max": 201.8,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 53.1,
+      "min": 48.5,
+      "max": 59.0,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 149.2,
+      "min": 138.0,
+      "max": 160.8,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 70.5,
+      "min": 63.0,
+      "max": 74.8,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 49.7,
+      "min": 41.3,
+      "max": 50.3,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=72"
+      ],
+      [
+        "CONFIRMED=68"
+      ],
+      [
+        "CONFIRMED=67"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "transfers-ramp": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 481.4,
+      "min": 480.6,
+      "max": 485.7,
+      "n": 3
+    },
+    "p50": {
+      "median": 6.5029065,
+      "min": 5.919375,
+      "max": 7.542148,
+      "n": 3
+    },
+    "p95": {
+      "median": 1720.6813833999986,
+      "min": 1696.9780219999998,
+      "max": 1775.14794365,
+      "n": 3
+    },
+    "p99": {
+      "median": 2209.6730282,
+      "min": 2147.656316000003,
+      "max": 2308.812802779996,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 13085,
+      "min": 11786,
+      "max": 13329,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 8.308042006882626,
+      "min": 7.4832696288206835,
+      "max": 8.462910875624607,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 122.1,
+      "min": 116.4,
+      "max": 122.2,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 186.9,
+      "min": 180.1,
+      "max": 190.1,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 117.4,
+      "min": 116.8,
+      "max": 119.0,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 212.4,
+      "min": 212.3,
+      "max": 217.0,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 126.9,
+      "min": 126.4,
+      "max": 127.0,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 191.5,
+      "min": 190.9,
+      "max": 193.9,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=64"
+      ],
+      [
+        "CONFIRMED=82"
+      ],
+      [
+        "CONFIRMED=80"
+      ]
+    ],
+    "thresholdsPassed": 0
+  },
+  "tune-pool10-vtoff": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.374254,
+      "min": 3.353064,
+      "max": 3.603333,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.654264,
+      "min": 7.092957,
+      "max": 7.79159,
+      "n": 3
+    },
+    "p99": {
+      "median": 53.961088,
+      "min": 14.591711,
+      "max": 100.901124,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 61.8,
+      "min": 58.9,
+      "max": 64.0,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 202.9,
+      "min": 191.8,
+      "max": 209.4,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 49.5,
+      "min": 47.9,
+      "max": 50.3,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 118.3,
+      "min": 86.0,
+      "max": 137.6,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 49.0,
+      "min": 48.7,
+      "max": 49.8,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 46.5,
+      "min": 45.2,
+      "max": 47.1,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=70"
+      ],
+      [
+        "CONFIRMED=77"
+      ],
+      [
+        "CONFIRMED=80"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "tune-pool10-vton": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 4.115176,
+      "min": 3.899643,
+      "max": 4.142616,
+      "n": 3
+    },
+    "p95": {
+      "median": 9.523814,
+      "min": 9.257226,
+      "max": 12.276691,
+      "n": 3
+    },
+    "p99": {
+      "median": 51.461115,
+      "min": 43.290491,
+      "max": 63.615968,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 84.8,
+      "min": 81.0,
+      "max": 87.8,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 200.4,
+      "min": 196.1,
+      "max": 202.9,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 57.6,
+      "min": 52.8,
+      "max": 60.8,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 148.9,
+      "min": 131.1,
+      "max": 156.4,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 69.7,
+      "min": 69.7,
+      "max": 72.2,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 50.3,
+      "min": 48.1,
+      "max": 50.6,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=64"
+      ],
+      [
+        "CONFIRMED=84"
+      ],
+      [
+        "CONFIRMED=82"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "tune-pool20-vtoff": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.379481,
+      "min": 3.1302975,
+      "max": 3.949712,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.653351,
+      "min": 6.7678942499999994,
+      "max": 10.274597,
+      "n": 3
+    },
+    "p99": {
+      "median": 37.99414196000018,
+      "min": 30.04453,
+      "max": 77.227574,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 60.0,
+      "min": 55.2,
+      "max": 71.9,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 201.3,
+      "min": 198.9,
+      "max": 202.7,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 50.0,
+      "min": 44.9,
+      "max": 60.0,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 121.7,
+      "min": 121.0,
+      "max": 139.7,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 41.3,
+      "min": 40.0,
+      "max": 54.6,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 42.1,
+      "min": 39.1,
+      "max": 53.4,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=78"
+      ],
+      [
+        "CONFIRMED=63"
+      ],
+      [
+        "CONFIRMED=89"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "tune-pool20-vton": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.950282,
+      "min": 3.329667,
+      "max": 3.967698,
+      "n": 3
+    },
+    "p95": {
+      "median": 8.445792,
+      "min": 6.849685,
+      "max": 10.554622,
+      "n": 3
+    },
+    "p99": {
+      "median": 36.518387,
+      "min": 31.192248,
+      "max": 53.512768,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 84.9,
+      "min": 73.4,
+      "max": 88.3,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 200.2,
+      "min": 200.2,
+      "max": 200.5,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 53.1,
+      "min": 46.5,
+      "max": 56.6,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 122.9,
+      "min": 108.1,
+      "max": 137.7,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 67.2,
+      "min": 59.8,
+      "max": 74.1,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 44.4,
+      "min": 42.3,
+      "max": 53.5,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=64"
+      ],
+      [
+        "CONFIRMED=62"
+      ],
+      [
+        "CONFIRMED=64"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "tune-pool40-vtoff": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 3.682015,
+      "min": 3.5392755,
+      "max": 3.74706,
+      "n": 3
+    },
+    "p95": {
+      "median": 7.653678,
+      "min": 7.614577949999995,
+      "max": 8.212888,
+      "n": 3
+    },
+    "p99": {
+      "median": 24.603284,
+      "min": 14.952674,
+      "max": 26.65605857000016,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 62.8,
+      "min": 62.1,
+      "max": 63.7,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 199.3,
+      "min": 197.8,
+      "max": 202.1,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 53.6,
+      "min": 52.2,
+      "max": 54.3,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 154.9,
+      "min": 133.9,
+      "max": 190.8,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 54.9,
+      "min": 54.9,
+      "max": 58.8,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 52.8,
+      "min": 52.3,
+      "max": 57.6,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=77"
+      ],
+      [
+        "CONFIRMED=75"
+      ],
+      [
+        "CONFIRMED=87"
+      ]
+    ],
+    "thresholdsPassed": 3
+  },
+  "tune-pool40-vton": {
+    "runs": 3,
+    "achievedRps": {
+      "median": 250,
+      "min": 250,
+      "max": 250,
+      "n": 3
+    },
+    "p50": {
+      "median": 4.05818,
+      "min": 3.891667,
+      "max": 4.295099,
+      "n": 3
+    },
+    "p95": {
+      "median": 9.535879,
+      "min": 8.627783,
+      "max": 9.572873,
+      "n": 3
+    },
+    "p99": {
+      "median": 39.600183,
+      "min": 27.401502,
+      "max": 110.039777,
+      "n": 3
+    },
+    "httpErrorPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "droppedIterations": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "failedPct": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "escrowCpuAvg": {
+      "median": 85.0,
+      "min": 84.6,
+      "max": 88.6,
+      "n": 3
+    },
+    "escrowCpuPeak": {
+      "median": 199.1,
+      "min": 195.8,
+      "max": 204.0,
+      "n": 3
+    },
+    "postgresCpuAvg": {
+      "median": 57.6,
+      "min": 53.5,
+      "max": 58.0,
+      "n": 3
+    },
+    "postgresCpuPeak": {
+      "median": 127.8,
+      "min": 126.5,
+      "max": 177.3,
+      "n": 3
+    },
+    "escrowCpuLastMinute": {
+      "median": 72.0,
+      "min": 68.5,
+      "max": 83.4,
+      "n": 3
+    },
+    "postgresCpuLastMinute": {
+      "median": 49.5,
+      "min": 46.5,
+      "max": 59.1,
+      "n": 3
+    },
+    "invariantsClean": 3,
+    "reconClean": 3,
+    "outboxDrained": 3,
+    "replayHonoured": null,
+    "payoutStates": [
+      [
+        "CONFIRMED=81"
+      ],
+      [
+        "CONFIRMED=79"
+      ],
+      [
+        "CONFIRMED=70"
+      ]
+    ],
+    "thresholdsPassed": 3
+  }
+}

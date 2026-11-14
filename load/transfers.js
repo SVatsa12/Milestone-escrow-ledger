@@ -1,5 +1,6 @@
-// Uniform random transfers between the 500 funded wallets, ramping 50 -> 1000 req/s over
-// 5 minutes to find the knee. Unique Idempotency-Key per request.
+// Uniform random transfers between the 500 funded wallets. Unique Idempotency-Key per request.
+//   default ("saturation"): ramping-arrival-rate 50 -> 1000 req/s over 5 minutes, past the knee
+//   RATE=250 ("sustainable"): constant-arrival-rate at RATE req/s for DURATION_SEC
 import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
 import { BASE, ADMIN, jsonHeaders, newKey, pick, randInt, baseThresholds, summarize, SUMMARY_TREND_STATS } from './lib/common.js';
@@ -8,6 +9,7 @@ import { setupData } from './lib/setup.js';
 const START = parseInt(__ENV.START_RPS || '50', 10);
 const TARGET = parseInt(__ENV.TARGET_RPS || '1000', 10);
 const DURATION_SEC = parseInt(__ENV.DURATION_SEC || '300', 10);
+const RATE = __ENV.RATE ? parseInt(__ENV.RATE, 10) : null;
 
 const transferLatency = new Trend('transfer_latency', true);
 const insufficientFunds = new Counter('insufficient_funds');
@@ -16,7 +18,14 @@ export const options = {
   setupTimeout: '10m',
   summaryTrendStats: SUMMARY_TREND_STATS,
   scenarios: {
-    main: {
+    main: RATE ? {
+      executor: 'constant-arrival-rate',
+      rate: RATE,
+      timeUnit: '1s',
+      duration: `${DURATION_SEC}s`,
+      preAllocatedVUs: 200,
+      maxVUs: parseInt(__ENV.MAX_VUS || '1000', 10),
+    } : {
       executor: 'ramping-arrival-rate',
       startRate: START,
       timeUnit: '1s',
@@ -46,5 +55,5 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return summarize('transfers', `${START}->${TARGET}`, DURATION_SEC, data);
+  return summarize('transfers', RATE ? RATE : `${START}->${TARGET}`, DURATION_SEC, data);
 }

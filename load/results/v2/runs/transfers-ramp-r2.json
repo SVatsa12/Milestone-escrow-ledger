@@ -1,0 +1,65 @@
+{
+  "run": "transfers-ramp-r2",
+  "group": "saturation",
+  "label": "transfers-ramp",
+  "repeat": 2,
+  "script": "transfers.js",
+  "env": {},
+  "hikariPool": 20,
+  "virtualThreads": true,
+  "durationSec": 300,
+  "startedAt": "2026-11-14T19:56:43.619481+00:00",
+  "k6ExitCode": 99,
+  "requests": 144413,
+  "achievedRps": 481.4,
+  "p50": 5.919375,
+  "p95": 1696.9780219999998,
+  "p99": 2147.656316000003,
+  "errorRate": 0,
+  "droppedIterations": 13085,
+  "transferP95": 1696.9780219999998,
+  "thresholdsPassed": false,
+  "replayHonoured": null,
+  "cpu": {
+    "escrow": {
+      "avg": 122.2,
+      "peak": 186.9,
+      "samples": 150,
+      "lastMinute": {
+        "avg": 127.0,
+        "peak": 138.3,
+        "samples": 30
+      }
+    },
+    "postgres": {
+      "avg": 117.4,
+      "peak": 212.4,
+      "samples": 150,
+      "lastMinute": {
+        "avg": 190.9,
+        "peak": 207.2,
+        "samples": 30
+      }
+    }
+  },
+  "checks": {
+    "outboxDrained": true,
+    "payoutsSettled": true,
+    "invariantViolations": 0,
+    "reconDate": "2026-11-15",
+    "recon": {
+      "DEPOSIT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      },
+      "PAYOUT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      }
+    },
+    "reconClean": true
+  },
+  "payoutStates": [
+    "CONFIRMED=82"
+  ]
+}

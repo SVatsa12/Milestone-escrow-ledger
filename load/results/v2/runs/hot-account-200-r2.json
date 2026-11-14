@@ -1,0 +1,65 @@
+{
+  "run": "hot-account-200-r2",
+  "group": "hot-account",
+  "label": "hot-account-200",
+  "repeat": 2,
+  "script": "hot-account.js",
+  "env": {},
+  "hikariPool": 20,
+  "virtualThreads": true,
+  "durationSec": 120,
+  "startedAt": "2026-11-14T20:42:54.568875+00:00",
+  "k6ExitCode": 0,
+  "requests": 24001,
+  "achievedRps": 200,
+  "p50": 3.586,
+  "p95": 19.423987,
+  "p99": 183.158119,
+  "errorRate": 0,
+  "droppedIterations": 0,
+  "transferP95": 19.423987,
+  "thresholdsPassed": true,
+  "replayHonoured": null,
+  "cpu": {
+    "escrow": {
+      "avg": 64.3,
+      "peak": 202.5,
+      "samples": 61,
+      "lastMinute": {
+        "avg": 46.2,
+        "peak": 72.2,
+        "samples": 30
+      }
+    },
+    "postgres": {
+      "avg": 38.2,
+      "peak": 96.1,
+      "samples": 61,
+      "lastMinute": {
+        "avg": 32.0,
+        "peak": 49.5,
+        "samples": 30
+      }
+    }
+  },
+  "checks": {
+    "outboxDrained": true,
+    "payoutsSettled": true,
+    "invariantViolations": 0,
+    "reconDate": "2026-11-15",
+    "recon": {
+      "DEPOSIT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      },
+      "PAYOUT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      }
+    },
+    "reconClean": true
+  },
+  "payoutStates": [
+    "CONFIRMED=73"
+  ]
+}

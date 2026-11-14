@@ -1,0 +1,68 @@
+{
+  "run": "tune-pool10-vtoff-r2",
+  "group": "tuning",
+  "label": "tune-pool10-vtoff",
+  "repeat": 2,
+  "script": "transfers.js",
+  "env": {
+    "RATE": 250,
+    "DURATION_SEC": 180
+  },
+  "hikariPool": 10,
+  "virtualThreads": false,
+  "durationSec": 180,
+  "startedAt": "2026-11-14T21:38:43.349856+00:00",
+  "k6ExitCode": 0,
+  "requests": 45001,
+  "achievedRps": 250,
+  "p50": 3.374254,
+  "p95": 7.092957,
+  "p99": 14.591711,
+  "errorRate": 0,
+  "droppedIterations": 0,
+  "transferP95": 7.092957,
+  "thresholdsPassed": true,
+  "replayHonoured": null,
+  "cpu": {
+    "escrow": {
+      "avg": 58.9,
+      "peak": 191.8,
+      "samples": 90,
+      "lastMinute": {
+        "avg": 48.7,
+        "peak": 76.6,
+        "samples": 30
+      }
+    },
+    "postgres": {
+      "avg": 47.9,
+      "peak": 86.0,
+      "samples": 90,
+      "lastMinute": {
+        "avg": 47.1,
+        "peak": 81.8,
+        "samples": 30
+      }
+    }
+  },
+  "checks": {
+    "outboxDrained": true,
+    "payoutsSettled": true,
+    "invariantViolations": 0,
+    "reconDate": "2026-11-15",
+    "recon": {
+      "DEPOSIT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      },
+      "PAYOUT": {
+        "status": "COMPLETED",
+        "mismatches": 0
+      }
+    },
+    "reconClean": true
+  },
+  "payoutStates": [
+    "CONFIRMED=77"
+  ]
+}

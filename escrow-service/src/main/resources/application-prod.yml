@@ -1,0 +1,9 @@
+# Production profile (SPRING_PROFILES_ACTIVE=prod).
+#
+# The Razorpay keys are REQUIRED here (no defaults): with a key id set, RazorpaySdkGateway is the
+# gateway; without one the app refuses to start instead of silently using FakeRazorpayGateway,
+# which is what it once did everywhere (chaos/FINDINGS.md #27).
+razorpay:
+  key-id: ${RAZORPAY_KEY_ID}
+  key-secret: ${RAZORPAY_KEY_SECRET}
+  webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}

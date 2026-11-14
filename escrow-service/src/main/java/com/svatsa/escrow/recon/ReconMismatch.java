@@ -19,8 +19,18 @@ public record ReconMismatch(
     String mismatchReason,  // 'STATE_MISMATCH', 'AMOUNT_MISMATCH', 'NOT_FOUND', etc.
     String severity,  // 'ERROR' or 'WARN'
     String actionTaken,  // what we did about it
-    Instant createdAt
+    Instant createdAt,
+    String source,       // PAYOUT_PROVIDER, RAZORPAY, LEDGER (null on rows written before V12)
+    String detail        // human-readable context, e.g. our current state for MISSING_IN_LEDGER
 ) {
+    /** Without source and detail (the pre-V12 shape). */
+    public ReconMismatch(UUID id, UUID reconRunId, String entityId, String entityType, String expectedState,
+                         String actualState, Long expectedAmountPaise, Long actualAmountPaise, String mismatchReason,
+                         String severity, String actionTaken, Instant createdAt) {
+        this(id, reconRunId, entityId, entityType, expectedState, actualState, expectedAmountPaise, actualAmountPaise,
+            mismatchReason, severity, actionTaken, createdAt, null, null);
+    }
+
     public static String reason(String desc) {
         return desc;
     }

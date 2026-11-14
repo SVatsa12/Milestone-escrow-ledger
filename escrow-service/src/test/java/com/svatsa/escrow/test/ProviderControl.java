@@ -68,13 +68,20 @@ public final class ProviderControl {
         this.port = ((WebServerApplicationContext) context).getWebServer().getPort();
     }
 
-    /** Starts the provider on a random port against this Postgres database, schema "provider". */
-    public static ProviderControl start(String jdbcUrl, String username, String password) {
+    /**
+     * Starts the provider on a random port against this Postgres database, schema "provider", on
+     * {@code clock}: the same clock escrow-service's test contexts use, so a test that moves time
+     * moves it for the bank too (its settled_at and ASYNC scheduler), e.g. to reconcile a chosen day.
+     */
+    public static ProviderControl start(String jdbcUrl, String username, String password, java.time.Clock clock) {
         ProviderControl[] self = new ProviderControl[1];
         PayoutRequestObserver observer = key -> self[0].observed(key);
         ConfigurableApplicationContext ctx = new SpringApplicationBuilder(PayoutProviderApplication.class)
             .web(WebApplicationType.SERVLET)
-            .initializers(c -> c.getBeanFactory().registerSingleton("testPayoutRequestObserver", observer))
+            .initializers(c -> {
+                c.getBeanFactory().registerSingleton("testPayoutRequestObserver", observer);
+                c.getBeanFactory().registerSingleton("sharedTestClock", clock);
+            })
             .properties(Map.ofEntries(
                 Map.entry("spring.config.name", "mock-payout-provider-in-escrow-tests"),   // no such file
                 Map.entry("spring.application.name", "mock-payout-provider"),

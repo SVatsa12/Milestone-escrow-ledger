@@ -19,6 +19,11 @@ public class MutableClock extends Clock {
         offset.updateAndGet(current -> current.plus(by));
     }
 
+    /** Jump to {@code instant} (from then on, time keeps moving from there). */
+    public void set(Instant instant) {
+        offset.set(Duration.between(Instant.now(), instant));
+    }
+
     public void reset() {
         offset.set(Duration.ZERO);
     }

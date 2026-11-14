@@ -36,12 +36,15 @@ public class DepositService {
     private final JdbcClient jdbcClient;
     private final RazorpayGateway razorpayGateway;
     private final OutboxWriter outboxWriter;
+    private final java.time.Clock clock;
 
     public DepositService(
         JdbcClient jdbcClient,
         RazorpayGateway razorpayGateway,
-        OutboxWriter outboxWriter
+        OutboxWriter outboxWriter,
+        java.time.Clock clock
     ) {
+        this.clock = clock;
         this.jdbcClient = jdbcClient;
         this.razorpayGateway = razorpayGateway;
         this.outboxWriter = outboxWriter;
@@ -135,10 +138,13 @@ public class DepositService {
             "UPDATE deposits SET " +
             "  razorpay_payment_id = ?, " +
             "  status = 'CAPTURED', " +
+            // Reconciliation attributes a deposit to the IST day it was captured (V12).
+            "  captured_at = COALESCE(captured_at, ?), " +
             "  updated_at = now() " +
             "WHERE razorpay_order_id = ? AND status IN ('CREATED', 'CAPTURED')"
         )
             .param(paymentId)
+            .param(com.svatsa.escrow.common.SqlTime.ts(clock.instant()))
             .param(orderId)
             .update();
 

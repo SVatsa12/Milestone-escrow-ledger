@@ -253,7 +253,9 @@ Regression: `DepositWebhookIT` (every case checks the wallet balance).
 conditional on `razorpay.key-id` having the literal value `"not_empty"`, so the real gateway never
 loaded, even with test-mode keys configured. **Fix:** the SDK gateway when a key id is set, the fake
 when it's blank.
-Regression: `DepositWebhookIT` (runs with no key id, so the fake is selected).
+Regression: `DepositWebhookIT` (runs with no key id, so the fake is selected), and since #41
+`RazorpayGatewayWiringTest`: the `prod` profile wires `RazorpaySdkGateway` and no fake, and refuses
+to start without keys.
 
 ### 28. Malformed requests were 500, not 400
 A bad header value (`MethodArgumentTypeMismatchException`), a missing required header or
@@ -449,10 +451,43 @@ These were listed as open issues below; each is now closed with its own tests.
 - **Saga bugs found by the real provider: none.** Every payout test and C1/C2 passed against it
   unchanged in substance; the stub's differences hadn't been hiding a saga defect.
 
+### 41. Reconciliation only looked one way, and deposits not at all — closed
+- **Gap:** payout reconciliation walked *our* payouts and asked the provider about each one, so a
+  payout the provider made that we never recorded (or recorded as FAILED and refunded: a double
+  payout) could never be found. Deposit reconciliation was a stub that recorded "not yet
+  reconciled". The invariant check ran but only logged. A re-run only ever added mismatches, so a
+  fixed problem stayed listed.
+- **Fix:** `ReconciliationService` compares both directions for one Asia/Kolkata day and never moves
+  money:
+  - **PAYOUT_PROVIDER:** our CONFIRMED payouts against the provider's `GET /v1/settlements`.
+    `MISSING_AT_PROVIDER`, `MISSING_IN_LEDGER` (the detail names our state: UNKNOWN/PROCESSING is
+    lag, FAILED/CANCELLED is a DOUBLE PAYOUT, ABSENT is a key we never issued), `AMOUNT_MISMATCH`.
+  - **RAZORPAY:** our CAPTURED deposits (new `deposits.captured_at`, from the injected Clock)
+    against `RazorpayGateway.fetchPayments` with status captured. "Credited" means the ledger has
+    the `deposit:rzp:{paymentId}` entry. `MISSING_IN_LEDGER` (a missed webhook),
+    `MISSING_AT_GATEWAY`, `AMOUNT_MISMATCH`.
+  - **Midnight:** keys are matched over a ±1 day window and each pair is attributed to the external
+    side's day, so "settled 23:59 IST, confirmed 00:01" is one match, not a mismatch on each day.
+  - Each run records `InvariantChecker` violations as `LEDGER_INVARIANT`, replaces its own
+    mismatches in one transaction on a re-run, and publishes
+    `escrow.recon.mismatches{source,reason}` and `escrow.recon.runs{source,status}`. External data is
+    fetched before any transaction is opened.
+- **Also found:**
+  - `RazorpaySdkGateway.fetchPayments` made one call (at most one page, 10 by default) and parsed the
+    SDK's `List<Payment>` as a JSON object, so it would have thrown on the first real response. It
+    now pages with `count=100`/`skip` until a short page and sends the day as unix seconds.
+  - There was no `prod` profile. `application-prod.yml` now requires the Razorpay keys, and the SDK
+    gateway refuses a missing or unresolved key: Spring resolves placeholders leniently in the
+    gateway condition and would otherwise hand Razorpay the literal `${RAZORPAY_KEY_ID}`.
+- **Test infrastructure:** escrow's test contexts and the in-process provider now share one
+  `MutableClock`, so a test can move both to a chosen day; ReconciliationIT reconciles its own days
+  in 2031 so other test classes' payouts and deposits never show up as noise.
+- **Regression:** `ReconciliationIT` (clean day; stray provider payout; paid-but-FAILED double payout;
+  amount drift; missing at provider; payout and deposit across midnight; re-run replaces; missed
+  webhook; missing at gateway; deposit amount; LEDGER_INVARIANT; metrics),
+  `RazorpaySdkGatewayPagingTest`, `RazorpayGatewayWiringTest`.
+
 ## Open issues (not fixed yet)
-- **Not built yet, so not testable yet** (no test can pass until the feature exists):
-  - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
-    recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
 - **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
   so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.

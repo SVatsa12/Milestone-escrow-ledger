@@ -156,11 +156,15 @@ class C2ProviderConnectionResetChaosIT extends AbstractChaosIT {
             failures.add("expected " + PAYOUTS + " payouts, created " + payoutIds.size());
         }
 
-        // What the bank paid: its settlements (today and yesterday in IST, in case the run straddles
-        // midnight there), plus a by-key lookup for every payout we created.
-        LocalDate todayIst = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        List<ProviderControl.Record> settled = new ArrayList<>(PROVIDER.settlements(todayIst.minusDays(1)));
-        settled.addAll(PROVIDER.settlements(todayIst));
+        // What the bank paid: its settlements, plus a by-key lookup for every payout we created. The
+        // provider runs on the test clock, which recovery moved forward (15 min a pass), so take the
+        // IST day from that clock and include the days either side: a run near midnight IST settles
+        // payouts on the next day.
+        LocalDate todayIst = LocalDate.ofInstant(clock.instant(), ZoneId.of("Asia/Kolkata"));
+        List<ProviderControl.Record> settled = new ArrayList<>();
+        for (int d = -1; d <= 1; d++) {
+            settled.addAll(PROVIDER.settlements(todayIst.plusDays(d)));
+        }
         Map<PayoutState, Integer> finalStates = new EnumMap<>(PayoutState.class);
         long confirmedPaise = 0;
         int faultedCalls = 0;

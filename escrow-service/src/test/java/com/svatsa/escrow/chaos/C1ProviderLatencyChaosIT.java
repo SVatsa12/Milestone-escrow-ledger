@@ -108,9 +108,12 @@ class C1ProviderLatencyChaosIT extends AbstractChaosIT {
                 + ") AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')")
             .query(Long.class).single()).as("no reverse entries").isZero();
 
-        LocalDate todayIst = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        long providerSettled = PROVIDER.settlements(todayIst.minusDays(1)).stream().mapToLong(ProviderControl.Record::amountPaise).sum()
-            + PROVIDER.settlements(todayIst).stream().mapToLong(ProviderControl.Record::amountPaise).sum();
+        // The provider runs on the (moved) test clock: take the IST day from it, with the days either side.
+        LocalDate todayIst = LocalDate.ofInstant(clock.instant(), ZoneId.of("Asia/Kolkata"));
+        long providerSettled = 0;
+        for (int d = -1; d <= 1; d++) {
+            providerSettled += PROVIDER.settlements(todayIst.plusDays(d)).stream().mapToLong(ProviderControl.Record::amountPaise).sum();
+        }
         assertThat(providerSettled).as("provider settled").isEqualTo(PAYOUTS * AMOUNT);
         assertThat(balance("EXTERNAL_BANK:PAYOUTS") - bankBefore).as("ledger confirmed").isEqualTo(PAYOUTS * AMOUNT);
         assertThat(accountRepository.findById(walletId).orElseThrow().balance()).isZero();

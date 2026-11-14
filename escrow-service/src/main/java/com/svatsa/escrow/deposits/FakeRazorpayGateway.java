@@ -33,27 +33,21 @@ public class FakeRazorpayGateway implements RazorpayGateway {
         return orderId;
     }
 
-    /**
-     * Fetch fake payments.
-     * Returns all payments created so far (in-memory only).
-     */
+    /** Fake payments created in [from, to), like the real API's from/to filter. */
     @Override
-    public List<RazorpayGateway.PaymentRecord> fetchPayments(long from, long to) {
+    public List<RazorpayGateway.PaymentRecord> fetchPayments(java.time.Instant from, java.time.Instant to) {
         return payments.values().stream()
-            .map(p -> new RazorpayGateway.PaymentRecord(
-                p.paymentId(),
-                p.orderId(),
-                p.amountPaise(),
-                p.status()
-            ))
+            .filter(p -> !p.createdAt().isBefore(from) && p.createdAt().isBefore(to))
+            .map(p -> new RazorpayGateway.PaymentRecord(p.paymentId(), p.orderId(), p.amountPaise(), p.status(), p.createdAt()))
             .toList();
     }
 
     /**
-     * Add a fake payment (for tests).
+     * Add a fake payment (for tests): what Razorpay would report for it.
      */
-    public void addFakePayment(String paymentId, String orderId, long amountPaise, String status) {
-        payments.put(paymentId, new FakePayment(paymentId, orderId, amountPaise, status));
+    public void addFakePayment(String paymentId, String orderId, long amountPaise, String status,
+                               java.time.Instant createdAt) {
+        payments.put(paymentId, new FakePayment(paymentId, orderId, amountPaise, status, createdAt));
     }
 
     /**
@@ -73,6 +67,6 @@ public class FakeRazorpayGateway implements RazorpayGateway {
 
     record FakeOrder(String orderId, String receipt, long amountPaise, Map<String, String> notes) {}
 
-    record FakePayment(String paymentId, String orderId, long amountPaise, String status) {}
+    record FakePayment(String paymentId, String orderId, long amountPaise, String status, java.time.Instant createdAt) {}
 
 }

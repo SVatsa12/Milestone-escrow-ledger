@@ -1,13 +1,15 @@
 package com.svatsa.escrow.deposits;
 
+import com.razorpay.Entity;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
-import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,15 +26,50 @@ import java.util.Map;
 public class RazorpaySdkGateway implements RazorpayGateway {
     private static final Logger log = LoggerFactory.getLogger(RazorpaySdkGateway.class);
 
-    private final RazorpayClient client;
+    /** Razorpay's maximum page size for GET /payments. */
+    static final int PAGE_SIZE = 100;
 
+    /**
+     * One page of GET /payments ({@code from}, {@code to}, {@code count}, {@code skip}). The
+     * seam the paging unit test stubs; in production it is the SDK call.
+     */
+    @FunctionalInterface
+    interface PaymentsPage {
+        List<JSONObject> fetch(JSONObject params) throws RazorpayException;
+    }
+
+    private final RazorpayClient client;
+    private final PaymentsPage paymentsPage;
+
+    @Autowired
     public RazorpaySdkGateway(RazorpayConfig config) throws RazorpayException {
-        this.client = new RazorpayClient(config.keyId(), config.keySecret());
+        this(new RazorpayClient(required(config.keyId(), "razorpay.key-id (RAZORPAY_KEY_ID)"),
+            required(config.keySecret(), "razorpay.key-secret (RAZORPAY_KEY_SECRET)")));
+    }
+
+    /**
+     * application-prod.yml has no defaults for the keys, but Spring resolves placeholders leniently
+     * here and would hand over the literal "${RAZORPAY_KEY_ID}" as the key. Refuse to start instead.
+     */
+    private static String required(String value, String name) {
+        if (value == null || value.isBlank() || value.startsWith("${")) {
+            throw new IllegalStateException(name + " is not set; refusing to start the Razorpay gateway");
+        }
+        return value;
+    }
+
+    private RazorpaySdkGateway(RazorpayClient client) {
+        this(client, params -> client.Payments.fetchAll(params).stream().map(Entity::toJson).toList());
+    }
+
+    RazorpaySdkGateway(RazorpayClient client, PaymentsPage paymentsPage) {
+        this.client = client;
+        this.paymentsPage = paymentsPage;
     }
 
     /**
      * Create an order in Razorpay.
-     * 
+     *
      * Currency is always INR (Indian Rupees).
      * amount is in paise (smallest unit, 100 paise = 1 rupee).
      */
@@ -43,7 +80,7 @@ public class RazorpaySdkGateway implements RazorpayGateway {
             orderRequest.put("amount", amountPaise);
             orderRequest.put("currency", "INR");
             orderRequest.put("receipt", receipt);
-            
+
             JSONObject notesJson = new JSONObject();
             for (Map.Entry<String, String> entry : notes.entrySet()) {
                 notesJson.put(entry.getKey(), entry.getValue());
@@ -58,10 +95,10 @@ public class RazorpaySdkGateway implements RazorpayGateway {
                 order = new JSONObject(orderResponse.toString());
             }
             String orderId = order.getString("id");
-            
+
             log.info("Created Razorpay order: orderId={}, receipt={}, amountPaise={}",
                 orderId, receipt, amountPaise);
-            
+
             return orderId;
         } catch (RazorpayException e) {
             log.error("Failed to create Razorpay order: {}", e.getMessage());
@@ -70,41 +107,42 @@ public class RazorpaySdkGateway implements RazorpayGateway {
     }
 
     /**
-     * Fetch payments for a date range.
-     * Uses the Payments API with filters.
+     * Every payment created in [from, to): Razorpay filters by created_at in unix SECONDS and returns
+     * at most {@value #PAGE_SIZE} per call, so this pages with count/skip until a short page.
+     *
+     * This used to make one call, read at most one page (10 by default), and parse the SDK's
+     * {@code List<Payment>} as if it were a JSON object, which threw on the first real response.
+     * Razorpay's {@code to} is inclusive, so the last second is asked for as {@code to - 1}.
      */
     @Override
-    public List<PaymentRecord> fetchPayments(long from, long to) {
+    public List<PaymentRecord> fetchPayments(Instant from, Instant to) {
+        long fromSec = from.getEpochSecond();
+        long toSec = to.getEpochSecond() - 1;
+        List<PaymentRecord> records = new ArrayList<>();
         try {
-            JSONObject params = new JSONObject();
-            params.put("from", from / 1000); // Convert millis to seconds
-            params.put("to", to / 1000);
-
-            Object response = client.Payments.fetchAll(params);
-            JSONObject responseJson;
-            if (response instanceof JSONObject) {
-                responseJson = (JSONObject) response;
-            } else {
-                responseJson = new JSONObject(response.toString());
+            for (int skip = 0; ; skip += PAGE_SIZE) {
+                JSONObject params = new JSONObject()
+                    .put("from", fromSec)
+                    .put("to", toSec)
+                    .put("count", PAGE_SIZE)
+                    .put("skip", skip);
+                List<JSONObject> page = paymentsPage.fetch(params);
+                for (JSONObject p : page) {
+                    records.add(new PaymentRecord(
+                        p.getString("id"),
+                        p.optString("order_id", null),
+                        p.getLong("amount"),
+                        p.getString("status"),
+                        Instant.ofEpochSecond(p.getLong("created_at"))));
+                }
+                if (page.size() < PAGE_SIZE) {
+                    break;
+                }
             }
-            
-            JSONArray payments = responseJson.getJSONArray("items");
-            List<PaymentRecord> records = new ArrayList<>();
-            
-            for (int i = 0; i < payments.length(); i++) {
-                JSONObject payment = payments.getJSONObject(i);
-                records.add(new PaymentRecord(
-                    payment.getString("id"),
-                    payment.optString("order_id", null),
-                    payment.getLong("amount"),
-                    payment.getString("status")
-                ));
-            }
-            
-            log.debug("Fetched {} payments from Razorpay", records.size());
+            log.info("razorpay.payments-fetched from={} to={} count={}", fromSec, toSec, records.size());
             return records;
         } catch (RazorpayException e) {
-            log.error("Failed to fetch Razorpay payments: {}", e.getMessage());
+            log.error("razorpay.payments-fetch-failed from={} to={} error={}", fromSec, toSec, e.getMessage());
             throw new IllegalStateException("Failed to fetch Razorpay payments", e);
         }
     }

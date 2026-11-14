@@ -19,14 +19,10 @@ public interface RazorpayGateway {
     String createOrder(long amountPaise, String receipt, java.util.Map<String, String> notes);
 
     /**
-     * Fetch payment records for a date range.
-     * Used for reconciliation.
-     * 
-     * @param from start time in millis since epoch
-     * @param to end time in millis since epoch
-     * @return list of payments in the time range
+     * Every payment created in [from, to), whatever its status, across all pages.
+     * Used for reconciliation (it filters for "captured" itself).
      */
-    List<PaymentRecord> fetchPayments(long from, long to);
+    List<PaymentRecord> fetchPayments(java.time.Instant from, java.time.Instant to);
 
     /**
      * A payment record from Razorpay.
@@ -35,6 +31,7 @@ public interface RazorpayGateway {
         String paymentId,
         String orderId,
         long amountPaise,
-        String status // e.g., "captured", "failed"
+        String status, // e.g., "captured", "failed"
+        java.time.Instant createdAt
     ) {}
 }

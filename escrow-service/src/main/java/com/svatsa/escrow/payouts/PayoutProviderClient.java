@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -116,6 +117,19 @@ public class PayoutProviderClient {
             return null;
         }
     }
+
+    /**
+     * GET /v1/settlements?date=: every SUCCESS payout the provider settled that Asia/Kolkata day.
+     * Throws if the provider can't be asked: reconciliation must fail, not report a clean day.
+     */
+    public List<ProviderSettlement> settlements(java.time.LocalDate date) {
+        String url = config.providerBaseUrl() + "/v1/settlements?date=" + date;
+        ProviderSettlement[] body = restTemplate.getForObject(url, ProviderSettlement[].class);
+        return body == null ? List.of() : List.of(body);
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record ProviderSettlement(String idempotencyKey, String status, long amountPaise, java.time.Instant settledAt) {}
 
     public record ProviderResponse(int statusCode, String body) {}
 

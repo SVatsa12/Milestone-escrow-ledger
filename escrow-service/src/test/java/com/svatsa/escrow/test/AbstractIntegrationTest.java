@@ -92,6 +92,12 @@ public abstract class AbstractIntegrationTest {
 
     private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7").withExposedPorts(6379);
 
+    /**
+     * One clock for every test context and the in-process provider: moving time in a test moves it
+     * for both apps. Reset after every test.
+     */
+    private static final MutableClock CLOCK = new MutableClock();
+
     /** The real payout provider (in this JVM). */
     protected static final ProviderControl PROVIDER;
 
@@ -101,7 +107,7 @@ public abstract class AbstractIntegrationTest {
     static {
         // Postgres first: the provider needs it (its own schema, its own Flyway) before it can start.
         POSTGRES.start();
-        PROVIDER = ProviderControl.start(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        PROVIDER = ProviderControl.start(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), CLOCK);
         // Must happen before Toxiproxy starts so it gets the host.testcontainers.internal route.
         Testcontainers.exposeHostPorts(PROVIDER.port());
         Startables.deepStart(TOXIPROXY, KAFKA, REDIS).join();
@@ -143,7 +149,7 @@ public abstract class AbstractIntegrationTest {
         @Bean
         @Primary
         MutableClock testClock() {
-            return new MutableClock();
+            return CLOCK;
         }
     }
 

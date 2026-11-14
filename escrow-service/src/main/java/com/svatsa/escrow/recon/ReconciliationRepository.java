@@ -162,8 +162,9 @@ public class ReconciliationRepository {
         jdbcClient.sql("""
             INSERT INTO recon_mismatches
             (id, recon_run_id, entity_id, entity_type, expected_state, actual_state,
-             expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken,
+             source, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (recon_run_id, entity_type, entity_id, mismatch_reason) DO NOTHING
             """)
             .param(1, mismatch.id())
@@ -177,7 +178,19 @@ public class ReconciliationRepository {
             .param(9, mismatch.mismatchReason())
             .param(10, mismatch.severity())
             .param(11, mismatch.actionTaken())
+            .param(12, mismatch.source())
+            .param(13, mismatch.detail())
             .update();
+    }
+
+    /**
+     * Replace every mismatch of a run with this set (one transaction, by the caller). A re-run for
+     * the same date and source therefore reflects only what is wrong now: a mismatch fixed since
+     * the last run disappears, and nothing is duplicated.
+     */
+    public void replaceMismatches(UUID runId, List<ReconMismatch> mismatches) {
+        jdbcClient.sql("DELETE FROM recon_mismatches WHERE recon_run_id = ?").param(runId).update();
+        mismatches.forEach(this::saveMismatch);
     }
 
     /**
@@ -186,7 +199,8 @@ public class ReconciliationRepository {
     public List<ReconMismatch> findMismatchesByRun(UUID runId) {
         return jdbcClient.sql("""
             SELECT id, recon_run_id, entity_id, entity_type, expected_state, actual_state,
-                   expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken, created_at
+                   expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken, created_at,
+                   source, detail
             FROM recon_mismatches
             WHERE recon_run_id = ?
             ORDER BY created_at DESC
@@ -204,7 +218,9 @@ public class ReconciliationRepository {
                 rs.getString("mismatch_reason"),
                 rs.getString("severity"),
                 rs.getString("action_taken"),
-                SqlTime.instant(rs, "created_at")
+                SqlTime.instant(rs, "created_at"),
+                rs.getString("source"),
+                rs.getString("detail")
             ))
             .list();
     }

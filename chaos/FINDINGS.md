@@ -232,6 +232,12 @@ Regression: `ReconciliationIT.rerunDoesNotDuplicateMismatches`.
 or no signature means "invalid", 400).
 Regression: `DepositWebhookIT`.
 
+### 25. Webhooks stored `"[B@1a2b…"` instead of the payload
+The dedupe insert bound `rawBody.toString()` (a Java array reference) into a `jsonb` column, so
+Postgres rejected it ("Token B is invalid") and every valid webhook failed. **Fix:**
+`new String(rawBody, UTF_8)`.
+Regression: `DepositWebhookIT.validCaptureCreditsTheWallet`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

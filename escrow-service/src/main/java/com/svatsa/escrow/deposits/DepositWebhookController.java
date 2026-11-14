@@ -109,7 +109,7 @@ public class DepositWebhookController {
             .param("razorpay")
             .param(eventType)
             .param(true)
-            .param(rawBody.toString())
+            .param(new String(rawBody, java.nio.charset.StandardCharsets.UTF_8)) // was rawBody.toString(): "[B@1a2b..." into a jsonb column
             .update();
 
         if (inserted == 0) {

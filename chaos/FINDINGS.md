@@ -196,6 +196,10 @@ P3 and AGENTS.md specify `422 IDEMPOTENCY_KEY_REUSED`; the code threw a `Validat
 (400 `VALIDATION_FAILED`). **Fix:** `DomainException("IDEMPOTENCY_KEY_REUSED", 422)`.
 Regression: `TransferApiIT.sameKeyWithDifferentBodyIs422IdempotencyKeyReused`.
 
+### 19. An unknown account id was 400, not 404
+`GET /api/v1/accounts/{id}` threw a `ValidationException`. **Fix:** `404 NOT_FOUND`.
+Regression: `TransferApiIT.unknownAccountIs404NotFound`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

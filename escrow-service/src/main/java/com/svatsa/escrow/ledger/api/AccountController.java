@@ -73,7 +73,8 @@ public class AccountController {
     @GetMapping("/accounts/{id}")
     public ResponseEntity<Map<String, Object>> getAccount(@PathVariable long id) {
         Account account = accountRepository.findById(id)
-            .orElseThrow(() -> new ValidationException("Account not found: " + id));
+            .orElseThrow(() -> new com.svatsa.escrow.common.DomainException("NOT_FOUND",
+                HttpStatus.NOT_FOUND, "Account not found: " + id));
 
         Map<String, Object> response = new HashMap<>();
         response.put("id", account.id());

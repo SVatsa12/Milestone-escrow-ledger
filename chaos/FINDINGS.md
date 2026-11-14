@@ -212,6 +212,12 @@ It read `TIMESTAMPTZ` columns with `rs.getObject(col, Instant.class)`, which pgj
 `SqlTime.instant(rs, col)` reads an `OffsetDateTime` and converts it.
 Regression: `ReconciliationIT.shouldFindRunsByDate` and friends.
 
+### 22. Every confirmed payout was reported as a mismatch
+Reconciliation compared our state (`CONFIRMED`) with the provider's (`SUCCESS`) as raw strings,
+so a clean day could never have zero mismatches. **Fix:** map the provider's vocabulary
+(`SUCCESS` → `CONFIRMED`; FAILED, CANCELLED, PROCESSING unchanged) before comparing.
+Regression: `ReconciliationIT.cleanDayHasNoMismatchForAConfirmedPayout`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

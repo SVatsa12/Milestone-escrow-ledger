@@ -253,7 +253,9 @@ public class ReconciliationService {
         }
 
         String externalState = record.status();
-        if (!internalState.equals(externalState)) {
+        // The provider speaks its own vocabulary (SUCCESS / FAILED / CANCELLED / PROCESSING).
+        // Comparing it to ours as raw strings flagged every CONFIRMED payout as a mismatch.
+        if (!internalState.equals(toInternalState(externalState))) {
             return new ReconMismatch(
                 UUID.randomUUID(),
                 runId,
@@ -314,5 +316,17 @@ public class ReconciliationService {
         } else {
             throw new IllegalArgumentException("Unknown entity type: " + run.entityType());
         }
+    }
+
+    /** Provider payout status -> our PayoutState name. */
+    static String toInternalState(String providerStatus) {
+        if (providerStatus == null) {
+            return null;
+        }
+        return switch (providerStatus) {
+            case "SUCCESS" -> "CONFIRMED";
+            case "FAILED", "CANCELLED", "PROCESSING" -> providerStatus;
+            default -> providerStatus;
+        };
     }
 }

@@ -290,6 +290,13 @@ job fired deadlocked. `openDispute` had the same inversion. **Fix:** the conditi
 comes first in both (milestone row, then accounts), so a loser of the race stops before touching money.
 Regression: `AutoReleaseIT.approveVersusAutoReleaseReleasesOnce`.
 
+### 33. Every request was counted twice
+The interceptor was registered by both `common/WebConfig` and `ratelimit/RateLimitWebConfig`
+(rate limiting had been implemented as both "P10" and "P13"), so the real limit was 15 requests a
+minute, not 30, and 2 payouts, not 5. An unused `RateLimitProperties` bound the dead `ratelimit.*`
+prefix. **Fix:** both leftovers deleted.
+Regression: `RateLimiterIT.limitIsHitAtNPlusOne`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

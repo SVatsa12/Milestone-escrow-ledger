@@ -11,8 +11,9 @@ COPY pom.xml ../pom.xml
 COPY escrow-service/src ./src
 
 # Build the application
-RUN apk add --no-cache maven && \
-    mvn clean package -DskipTests
+RUN --mount=type=cache,target=/root/.m2 \
+    apk add --no-cache maven && \
+    mvn -q -B clean package -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine

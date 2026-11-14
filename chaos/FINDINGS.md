@@ -138,6 +138,15 @@ every record failed and the consumer was stuck at offset 0. Fixed in config: `Js
 type, type headers ignored, wrapped in `ErrorHandlingDeserializer`.
 Regression: `AuditLogConsumerIT` waits for a ledger entry's event to land in `audit_log` exactly once.
 
+### 13. docker compose `app` profile could not start
+- The build contexts didn't match the Dockerfiles' `COPY` paths.
+- kafka-init called `kafka-topics.sh`, which doesn't exist in cp-kafka images, so no topics
+  were ever created.
+- The Kafka healthcheck used `nc`, which isn't in the image, so Kafka was always unhealthy.
+- The host listener advertised `kafka:9092`, which the host can't resolve.
+- No JUnit regression is possible for compose. It was verified by bringing the stack up: Kafka
+  is healthy, kafka-init exits 0 after creating the topics, and escrow-service reports UP.
+
 ## Open issues (not fixed yet)
 - **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
   P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto

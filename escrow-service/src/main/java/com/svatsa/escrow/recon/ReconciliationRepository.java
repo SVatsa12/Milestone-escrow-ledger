@@ -66,8 +66,8 @@ public class ReconciliationRepository {
                 rs.getObject("id", UUID.class),
                 rs.getObject("run_date", LocalDate.class),
                 rs.getString("entity_type"),
-                rs.getObject("started_at", Instant.class),
-                rs.getObject("completed_at", Instant.class),
+                SqlTime.instant(rs, "started_at"),
+                SqlTime.instant(rs, "completed_at"),
                 rs.getString("status"),
                 rs.getInt("mismatch_count"),
                 rs.getString("notes")
@@ -89,8 +89,8 @@ public class ReconciliationRepository {
                 rs.getObject("id", UUID.class),
                 rs.getObject("run_date", LocalDate.class),
                 rs.getString("entity_type"),
-                rs.getObject("started_at", Instant.class),
-                rs.getObject("completed_at", Instant.class),
+                SqlTime.instant(rs, "started_at"),
+                SqlTime.instant(rs, "completed_at"),
                 rs.getString("status"),
                 rs.getInt("mismatch_count"),
                 rs.getString("notes")
@@ -113,8 +113,8 @@ public class ReconciliationRepository {
                 rs.getObject("id", UUID.class),
                 rs.getObject("run_date", LocalDate.class),
                 rs.getString("entity_type"),
-                rs.getObject("started_at", Instant.class),
-                rs.getObject("completed_at", Instant.class),
+                SqlTime.instant(rs, "started_at"),
+                SqlTime.instant(rs, "completed_at"),
                 rs.getString("status"),
                 rs.getInt("mismatch_count"),
                 rs.getString("notes")
@@ -203,7 +203,7 @@ public class ReconciliationRepository {
                 rs.getString("mismatch_reason"),
                 rs.getString("severity"),
                 rs.getString("action_taken"),
-                rs.getObject("created_at", Instant.class)
+                SqlTime.instant(rs, "created_at")
             ))
             .list();
     }

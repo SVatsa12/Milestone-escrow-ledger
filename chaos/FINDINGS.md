@@ -206,6 +206,12 @@ so P12's reconciliation never ran once. **Fix:** plain `?` (each was used once, 
 explicit index).
 Regression: `ReconciliationIT` (all repository tests).
 
+### 21. Reconciliation couldn't read its own rows
+It read `TIMESTAMPTZ` columns with `rs.getObject(col, Instant.class)`, which pgjdbc rejects
+("conversion to class java.time.Instant from timestamp not supported"). **Fix:**
+`SqlTime.instant(rs, col)` reads an `OffsetDateTime` and converts it.
+Regression: `ReconciliationIT.shouldFindRunsByDate` and friends.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

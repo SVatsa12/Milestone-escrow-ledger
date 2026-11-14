@@ -14,4 +14,13 @@ public final class SqlTime {
     public static OffsetDateTime ts(Instant instant) {
         return instant == null ? null : instant.atOffset(ZoneOffset.UTC);
     }
+
+    /**
+     * Read a TIMESTAMPTZ column as an Instant. pgjdbc does not support getObject(col, Instant.class)
+     * ("conversion to class java.time.Instant from timestamp not supported").
+     */
+    public static Instant instant(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toInstant();
+    }
 }

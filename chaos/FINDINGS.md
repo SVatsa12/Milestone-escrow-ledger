@@ -487,8 +487,39 @@ These were listed as open issues below; each is now closed with its own tests.
   webhook; missing at gateway; deposit amount; LEDGER_INVARIANT; metrics),
   `RazorpaySdkGatewayPagingTest`, `RazorpayGatewayWiringTest`.
 
+### 42. The batched outbox relay could mark an event published ahead of an earlier failed one
+- **Gap:** since #14 the relay sends a batch asynchronously and marks every acknowledged row in one
+  UPDATE. Point 1 held (a row was marked only after its own ack), but if row A of an aggregate
+  failed and the later row B of the same aggregate succeeded, B was marked published and A retried
+  afterwards, so the outbox recorded B as delivered before A.
+- **Fix:** `OutboxBatchPublisher` decides what may be marked: per aggregate (the Kafka key), only
+  the prefix of rows before the first failure in the batch. Later rows are held back unmarked and go
+  again after A on a later poll (claims are `ORDER BY id`). A synchronous failure (the row can't be
+  built or serialized) stops the aggregate before its later rows are even sent. A send not acked by
+  the deadline (`escrow.outbox.relay.ack-timeout`, 5s) counts as failed.
+- **Also fixed:** `enable.idempotence: true` sat directly under `spring.kafka.producer`, which isn't
+  a Boot property, so it was never passed to the producer (idempotence was on only because Kafka 3+
+  defaults to it). It now lives under `properties`, with `max.in.flight.requests.per.connection: 5`.
+- **Still possible (documented, not fixed):** when a failure is reported asynchronously, B may
+  already be on Kafka; it is re-sent after A and consumers dedupe by eventId, but a consumer can see
+  B before A's retry. With idempotence and the same partition, the broker usually fails B's
+  in-flight batch with A's, but that isn't guaranteed. Closing it means waiting for A's ack before
+  sending B, which serializes a busy aggregate: `OutboxRelayThroughputIT` drains 5,000 events of ONE
+  aggregate, about 3,400/s now, and would drop to one ack round trip per event.
+- **Regression:** `OutboxBatchPublisherTest` (a KafkaTemplate over a MockProducer that fails chosen
+  records asynchronously, synchronously, or never acks them; a 500-row randomized check that the
+  published rows are exactly each aggregate's acked prefix), `OutboxProducerConfigIT` (effective
+  `ProducerConfig`: idempotence on, acks=all, in-flight <= 5), `OutboxRelayThroughputIT` unchanged.
+
 ## Open issues (not fixed yet)
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
+- **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
+  the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried
+  on the very next poll (every 200ms) with `attempts` only counting up.
+- **The relay's claim lock ends before it publishes.** The `FOR UPDATE SKIP LOCKED` claim runs in
+  its own transaction and commits before the sends, so two relay instances could claim the same
+  rows: duplicates (deduped by consumers) and per-aggregate reordering. Safe with today's single
+  instance per deployment; not with several.
 - **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
   so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.
 

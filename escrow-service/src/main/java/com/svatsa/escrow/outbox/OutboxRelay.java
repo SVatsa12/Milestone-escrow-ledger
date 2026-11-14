@@ -22,8 +22,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * OutboxRelay: polls the outbox table and publishes events to Kafka.
  *
  * Guarantees:
- * - At-least-once delivery: a failure to mark published_at means the event is retried.
- * - Ordered delivery per aggregate: SELECT ... ORDER BY id ensures temporal order.
+ * - At-least-once delivery: a row is marked published only after its own send was acknowledged
+ *   (OutboxBatchPublisher); anything else is retried.
+ * - Ordered per aggregate: rows are claimed ORDER BY id and keyed by aggregate (one partition), and a
+ *   later row of an aggregate is never marked published ahead of an earlier failed one
+ *   (OutboxBatchPublisher explains the one remaining gap).
  * - Safe concurrent execution: multiple instances use SKIP LOCKED, so no row is claimed twice.
  * - Exponential backoff: failed rows are retried after 2^attempts × 100ms, capped at 10 minutes.
  *
@@ -41,8 +44,8 @@ public class OutboxRelay {
     private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
     private final Clock clock;
 
-    @Value("${escrow.outbox.relay.batch-size:100}")
-    private int batchSize;
+    private final int batchSize;
+    private final java.time.Duration ackTimeout;
 
     public OutboxRelay(
         JdbcClient jdbcClient,
@@ -50,8 +53,12 @@ public class OutboxRelay {
         ObjectMapper objectMapper,
         TransactionTemplate transactionTemplate,
         io.micrometer.core.instrument.MeterRegistry meterRegistry,
-        Clock clock
+        Clock clock,
+        @Value("${escrow.outbox.relay.batch-size:100}") int batchSize,
+        @Value("${escrow.outbox.relay.ack-timeout:5s}") java.time.Duration ackTimeout
     ) {
+        this.batchSize = batchSize;
+        this.ackTimeout = ackTimeout;
         this.jdbcClient = jdbcClient;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
@@ -91,31 +98,25 @@ public class OutboxRelay {
     private static final int MAX_BATCHES_PER_RUN = 50;
 
     /**
-     * Send the whole batch asynchronously, wait for every ack, then mark all acked rows
-     * published in ONE update. It used to be send().get() plus an UPDATE per row, which capped
-     * the relay at a few hundred events/s and let the outbox fall minutes behind under load
-     * (found by the P15 benchmark). Still at-least-once: a row is marked published only after
-     * Kafka acked it; a crash between ack and mark re-sends it, and consumers dedupe by eventId.
+     * Send the whole batch asynchronously, wait for the acks, then mark the acked rows published in
+     * ONE update. It used to be send().get() plus an UPDATE per row, which capped the relay at a few
+     * hundred events/s and let the outbox fall minutes behind under load (found by the P15
+     * benchmark). Which rows may be marked is decided by {@link OutboxBatchPublisher}: only rows
+     * whose own send was acknowledged, and per aggregate only the prefix before its first failure
+     * (it used to mark every acked row, so a later event could be marked ahead of an earlier failed
+     * one of the same aggregate). Still at-least-once: a crash between ack and mark re-sends, and
+     * consumers dedupe by eventId.
      */
     private void publishBatch(List<OutboxRow> rows) {
-        List<java.util.concurrent.CompletableFuture<?>> sends = new java.util.ArrayList<>(rows.size());
-        for (OutboxRow row : rows) {
-            try {
-                sends.add(kafkaTemplate.send(toMessage(row)));
-            } catch (Exception e) {
-                sends.add(java.util.concurrent.CompletableFuture.failedFuture(e));
-            }
+        OutboxBatchPublisher.Result result = OutboxBatchPublisher.publish(
+            rows, row -> kafkaTemplate.send(toMessage(row)), ackTimeout);
+
+        result.failed().forEach(this::handlePublishFailure);
+        if (!result.heldBack().isEmpty()) {
+            logger.info("outbox.held-back count={} reason=earlier-event-of-same-aggregate-failed", result.heldBack().size());
+            meterRegistry.counter("outbox.held_back").increment(result.heldBack().size());
         }
-        List<Long> published = new java.util.ArrayList<>(rows.size());
-        for (int i = 0; i < rows.size(); i++) {
-            try {
-                sends.get(i).get(5, TimeUnit.SECONDS);
-                published.add(rows.get(i).id());
-            } catch (Exception e) {
-                Throwable cause = e instanceof java.util.concurrent.ExecutionException && e.getCause() != null ? e.getCause() : e;
-                handlePublishFailure(rows.get(i), cause instanceof Exception ex ? ex : e);
-            }
-        }
+        List<Long> published = result.published().stream().map(OutboxRow::id).toList();
         if (!published.isEmpty()) {
             transactionTemplate.executeWithoutResult(tx -> jdbcClient.sql(
                     "UPDATE outbox SET published_at = now() WHERE id = ANY(?)")

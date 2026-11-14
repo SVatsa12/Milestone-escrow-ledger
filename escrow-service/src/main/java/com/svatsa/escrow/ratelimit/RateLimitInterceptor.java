@@ -43,14 +43,20 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     private final RateLimitConfig config;
     private final MeterRegistry meterRegistry;
 
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
     public RateLimitInterceptor(
         RedisRateLimiter rateLimiter,
         RateLimitConfig config,
-        MeterRegistry meterRegistry
+        MeterRegistry meterRegistry,
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper
     ) {
         this.rateLimiter = rateLimiter;
         this.config = config;
         this.meterRegistry = meterRegistry;
+        // Spring's mapper flattens ProblemDetail properties into top-level members (RFC 9457).
+        // A plain new ObjectMapper() nested them under "properties", so a 429 had no "code".
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -125,7 +131,7 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             detail.setProperty("limit", limit);
             detail.setProperty("resetTime", result.resetTime);
 
-            String json = new com.fasterxml.jackson.databind.ObjectMapper()
+            String json = objectMapper
                 .writeValueAsString(detail);
             response.getWriter().write(json);
 

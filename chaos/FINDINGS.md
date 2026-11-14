@@ -297,6 +297,12 @@ minute, not 30, and 2 payouts, not 5. An unused `RateLimitProperties` bound the 
 prefix. **Fix:** both leftovers deleted.
 Regression: `RateLimiterIT.limitIsHitAtNPlusOne`.
 
+### 34. A 429 had no `code`
+The interceptor serialized `ProblemDetail` with a plain `new ObjectMapper()`, which nests extension
+members under `"properties"`, so the body had no top-level `code: RATE_LIMITED` (RFC 9457).
+**Fix:** use Spring's configured `ObjectMapper`.
+Regression: `RateLimiterIT.limitIsHitAtNPlusOne`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

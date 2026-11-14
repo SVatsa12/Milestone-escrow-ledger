@@ -164,6 +164,7 @@ public class ReconciliationRepository {
             (id, recon_run_id, entity_id, entity_type, expected_state, actual_state,
              expected_amount_paise, actual_amount_paise, mismatch_reason, severity, action_taken)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (recon_run_id, entity_type, entity_id, mismatch_reason) DO NOTHING
             """)
             .param(1, mismatch.id())
             .param(2, mismatch.reconRunId())

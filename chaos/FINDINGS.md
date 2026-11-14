@@ -218,6 +218,12 @@ so a clean day could never have zero mismatches. **Fix:** map the provider's voc
 (`SUCCESS` → `CONFIRMED`; FAILED, CANCELLED, PROCESSING unchanged) before comparing.
 Regression: `ReconciliationIT.cleanDayHasNoMismatchForAConfirmedPayout`.
 
+### 23. Re-running reconciliation for a date duplicated every mismatch
+A rerun reuses the date's run (`UNIQUE (run_date, entity_type)`) and inserted each mismatch again.
+**Fix:** `V10` makes mismatches unique per run, entity and reason; the insert is
+`ON CONFLICT DO NOTHING`.
+Regression: `ReconciliationIT.rerunDoesNotDuplicateMismatches`.
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

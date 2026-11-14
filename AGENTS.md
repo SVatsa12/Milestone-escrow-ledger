@@ -91,8 +91,11 @@ DRAFT ──fund──▶ FUNDED ──submit──▶ SUBMITTED ──approve�
 - Constructor injection only. Records for DTOs and events. No Lombok.
 - Every money-moving use case is one `@Transactional` service method. No `@Transactional` on controllers.
 - Time always comes from an injected `java.time.Clock`. Never call `Instant.now()` directly, so tests can move time forward.
-- Errors are RFC 9457 `ProblemDetail` with a stable `code`: `INSUFFICIENT_FUNDS`, `INVALID_STATE_TRANSITION`, `IDEMPOTENCY_KEY_REUSED`, `RATE_LIMITED`, `NOT_FOUND`, `FORBIDDEN`, `VALIDATION_FAILED`.
+- Errors are RFC 9457 `ProblemDetail` with a stable `code`: `INSUFFICIENT_FUNDS`, `INVALID_STATE_TRANSITION`, `IDEMPOTENCY_KEY_REUSED`, `RATE_LIMITED`, `NOT_FOUND`, `UNAUTHENTICATED`, `FORBIDDEN`, `VALIDATION_FAILED`.
 - Auth is a stub: `X-Actor-Id` and `X-Actor-Role` (`CLIENT|FREELANCER|ADMIN`) headers, checked in the service layer. Don't build real auth.
+  - `ActorArgumentResolver` checks both against `users`: an unknown id, or a role that isn't the user's stored role, is `401 UNAUTHENTICATED` (so is a missing or malformed header). A wrong person or role for the action is `403 FORBIDDEN`.
+  - **Bootstrap admin:** Flyway `V11` seeds user **id 1, `bootstrap-admin`, role `ADMIN`**. Creating users (`POST /api/escrow/users`) is ADMIN-only, so id 1 creates everyone else. Send `X-Actor-Id: 1`, `X-Actor-Role: ADMIN`.
+  - A user's id and role never change and users are never deleted (V11 triggers); the resolver's role cache relies on it.
 - Money-moving POSTs need an `Idempotency-Key` header. If it's missing, return 400.
 - Log with SLF4J, using structured key=value pairs. Never log secrets or full webhook bodies.
 - Every new SQL migration is a new Flyway file. Never edit an applied migration.

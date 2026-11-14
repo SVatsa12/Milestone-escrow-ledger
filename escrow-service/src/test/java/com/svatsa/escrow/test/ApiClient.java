@@ -29,8 +29,11 @@ public final class ApiClient {
         return new String[]{"X-Actor-Id", String.valueOf(id), "X-Actor-Role", role};
     }
 
+    /** The bootstrap ADMIN seeded by V11 (README, AGENTS.md). Every other user is created by it. */
+    public static final long BOOTSTRAP_ADMIN_ID = 1;
+
     public static String[] admin() {
-        return actor(1, "ADMIN");
+        return actor(BOOTSTRAP_ADMIN_ID, "ADMIN");
     }
 
     public HttpRequest.Builder postRequest(String path, String idempotencyKey, String[] headers, String body) {

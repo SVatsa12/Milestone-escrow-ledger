@@ -78,8 +78,8 @@ class AuthorizationIT extends AbstractIntegrationTest {
         forbidden(api.post(path, key("f1"), actor(freelancerA, "FREELANCER"), ""));
         forbidden(api.post(path, key("f2"), actor(clientB, "CLIENT"), ""));
         forbidden(api.post(path, key("f3"), ApiClient.admin(), ""));
-        // A user id that is the project's client but claims another role is still not the client.
-        forbidden(api.post(path, key("f4"), actor(clientA, "FREELANCER"), ""));
+        // The project's client id claiming another role is spoofing: rejected before any role check.
+        unauthenticated(api.post(path, key("f4"), actor(clientA, "FREELANCER"), ""));
         assertThat(states(projectA)).containsOnly(MilestoneState.DRAFT);
         assertThat(walletBalance("CLIENT_WALLET:" + clientA)).isEqualTo(1_000_000);
 
@@ -295,7 +295,58 @@ class AuthorizationIT extends AbstractIntegrationTest {
         assertThat(accountCount("CLIENT_WALLET:" + owner)).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("create user: ADMIN only (the bootstrap admin, id 1, creates everyone else)")
+    void createUser() throws Exception {
+        String body = "{\"name\":\"new-" + run + "\",\"role\":\"CLIENT\"}";
+        long usersBefore = userCount();
+
+        forbidden(api.post("/api/escrow/users", null, actor(clientA, "CLIENT"), body));
+        forbidden(api.post("/api/escrow/users", null, actor(freelancerA, "FREELANCER"), body));
+        unauthenticated(api.postWithoutActor("/api/escrow/users", null, body));
+        assertThat(userCount()).as("nobody created").isEqualTo(usersBefore);
+
+        long created = api.expect(api.post("/api/escrow/users", null, ApiClient.admin(), body), 201).path("id").asLong();
+        assertThat(walletBalance("CLIENT_WALLET:" + created)).isZero();
+        // An admin can create another admin, who can then act as ADMIN.
+        long admin2 = api.expect(api.post("/api/escrow/users", null, ApiClient.admin(),
+            "{\"name\":\"admin-" + run + "\",\"role\":\"ADMIN\"}"), 201).path("id").asLong();
+        api.expect(api.get("/api/v1/admin/invariants", actor(admin2, "ADMIN")), 200);
+    }
+
     // --- authentication --------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("a spoofed role is 401: a CLIENT or FREELANCER id claiming ADMIN, or each other's role")
+    void spoofedRoleIs401() throws Exception {
+        // Before the resolver checked users, client A claiming ADMIN got 200 here.
+        unauthenticated(api.get("/api/v1/admin/invariants", actor(clientA, "ADMIN")));
+        unauthenticated(api.get("/api/v1/admin/invariants", actor(freelancerA, "ADMIN")));
+        unauthenticated(api.post("/api/escrow/users", null, actor(clientA, "ADMIN"), "{\"name\":\"x\",\"role\":\"ADMIN\"}"));
+        long walletA = accountId("CLIENT_WALLET:" + clientA);
+        long walletB = accountId("CLIENT_WALLET:" + clientB);
+        unauthenticated(api.post("/api/v1/transfers", key("sp"), actor(clientB, "ADMIN"),
+            "{\"fromAccountId\":" + walletA + ",\"toAccountId\":" + walletB + ",\"amountPaise\":500,\"memo\":\"x\"}"));
+        // The bootstrap admin claiming to be a client is just as wrong.
+        unauthenticated(api.post("/api/v1/deposits", key("sp2"), actor(1, "CLIENT"), "{\"amountPaise\":100}"));
+        // Freelancer A claiming CLIENT can't fund client A's project either.
+        long projectA = project(clientA, freelancerA, 10_000);
+        unauthenticated(api.post("/api/escrow/projects/" + projectA + "/fund", key("sp3"), actor(freelancerA, "CLIENT"), ""));
+
+        assertThat(states(projectA)).containsOnly(MilestoneState.DRAFT);
+        assertThat(walletBalance("CLIENT_WALLET:" + clientA)).isEqualTo(1_000_000);
+    }
+
+    @Test
+    @DisplayName("an actor id that is not a user is 401, whatever role it claims")
+    void unknownActorIs401() throws Exception {
+        long unknown = jdbcClient.sql("SELECT max(id) + 1000 FROM users").query(Long.class).single();
+        for (String role : List.of("ADMIN", "CLIENT", "FREELANCER")) {
+            unauthenticated(api.get("/api/v1/admin/invariants", actor(unknown, role)));
+            unauthenticated(api.post("/api/v1/payouts", key("unk"), actor(unknown, role), "{\"amountPaise\":100}"));
+        }
+        unauthenticated(api.post("/api/escrow/users", null, actor(unknown, "ADMIN"), "{\"name\":\"x\",\"role\":\"CLIENT\"}"));
+    }
 
     @Test
     @DisplayName("missing or invalid actor headers are 401 UNAUTHENTICATED; SYSTEM can't come from headers")
@@ -422,6 +473,10 @@ class AuthorizationIT extends AbstractIntegrationTest {
 
     private long walletBalance(String code) {
         return jdbcClient.sql("SELECT balance FROM accounts WHERE code = ?").param(code).query(Long.class).single();
+    }
+
+    private long userCount() {
+        return jdbcClient.sql("SELECT count(*) FROM users").query(Long.class).single();
     }
 
     private long accountCount(String code) {

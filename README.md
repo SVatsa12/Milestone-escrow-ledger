@@ -46,6 +46,28 @@ docker compose up -d
 ./mvnw spring-boot:run -pl mock-payout-provider
 ```
 
+### Authentication (stub) and the bootstrap admin
+
+Every write endpoint needs `X-Actor-Id` and `X-Actor-Role` (`CLIENT`, `FREELANCER` or `ADMIN`).
+The service checks both against the `users` table: an unknown id, or a role that isn't that
+user's stored role, is `401 UNAUTHENTICATED`; the right kind of user acting on someone else's
+project, wallet or dispute is `403 FORBIDDEN`.
+
+A fresh database has exactly one user, seeded by Flyway `V11`:
+
+| id | name | role |
+|---|---|---|
+| 1 | `bootstrap-admin` | `ADMIN` |
+
+Only an ADMIN can create users, so start there:
+
+```bash
+curl -X POST localhost:8080/api/escrow/users   -H 'X-Actor-Id: 1' -H 'X-Actor-Role: ADMIN' -H 'Content-Type: application/json'   -d '{"name":"alice","role":"CLIENT"}'
+```
+
+If an existing database already has a non-admin user with id 1, V11 refuses to run; recreate the
+database (`docker compose down -v`).
+
 ### API Documentation
 
 Once the service is running, visit:

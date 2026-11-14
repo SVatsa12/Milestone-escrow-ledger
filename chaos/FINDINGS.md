@@ -390,9 +390,33 @@ These were listed as open issues below; each is now closed with its own tests.
   | `POST /api/v1/accounts` | ADMIN | `createAccount` |
   | `POST /api/v1/admin/deposits/simulate` | ADMIN | `adminEndpoints` |
   | `POST /api/v1/admin/recon/run` | ADMIN | `adminEndpoints` |
+  | `POST /api/escrow/users` | ADMIN (closed in #39) | `createUser` |
   | `POST /webhooks/razorpay` | no actor: authenticated by the HMAC signature | `DepositWebhookIT` (bad signature is 400) |
-  | `POST /api/escrow/users` | **no actor check** (see open issues) | not covered |
+
+  Since #39 every row with a role also requires that the actor id is a real user whose stored role
+  is the claimed one (`spoofedRoleIs401`, `unknownActorIs401`).
 - **Regression:** `AuthorizationIT.transfer`, `AuthorizationIT.createAccount`.
+
+### 39. Any caller could claim any role (role spoofing) — closed
+- **Gap:** `ActorArgumentResolver` only parsed the headers. It never looked at `users`, so a
+  CLIENT could send `X-Actor-Role: ADMIN` and pass every ADMIN check (transfers, account and user
+  creation, dispute resolution, admin endpoints), and an id that belonged to no user at all was
+  accepted too. Shown before the fix: client user 1 claiming ADMIN and the unknown id 987654321
+  claiming ADMIN both got `200` from `GET /api/v1/admin/invariants`. On a fresh database the first
+  client got id 1, so the "admin id 1" that tests and k6 sent was really that client.
+  `POST /api/escrow/users` also had no actor check at all.
+- **Fix:**
+  - The resolver looks the id up in `users`: an unknown id, or a claimed role that isn't the stored
+    one, is `401 UNAUTHENTICATED`. Found roles are cached; that is correct because `V11` makes a
+    user's id and role immutable and forbids deleting users. Unknown ids are never cached.
+  - `V11` seeds the bootstrap ADMIN, **id 1 `bootstrap-admin`** (README, AGENTS.md), moves the
+    `users` id sequence past it, and refuses to run if id 1 already exists as a non-admin.
+  - `POST /api/escrow/users` is ADMIN-only (and an ADMIN may create other ADMINs).
+  - `ApiClient.BOOTSTRAP_ADMIN_ID`, k6's `BOOTSTRAP_ADMIN_ID` and `run-bench.sh` use id 1;
+    `RateLimiterIT` now uses real users instead of random actor ids.
+- **Regression:** `AuthorizationIT.createUser`, `spoofedRoleIs401` (CLIENT/FREELANCER ids claiming
+  ADMIN, the admin claiming CLIENT, a freelancer claiming CLIENT; all 401, nothing changes),
+  `unknownActorIs401`.
 
 ## Open issues (not fixed yet)
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
@@ -400,9 +424,6 @@ These were listed as open issues below; each is now closed with its own tests.
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
   - P10's mock payout provider (the module is still an empty app; tests use `FakePayoutProvider`).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
-- **`POST /api/escrow/users` has no actor check.** Anyone can create a CLIENT or FREELANCER
-  user (and with it a wallet). It is the stub's registration endpoint, so there is no obvious
-  role to require yet; callers (k6, `ApiClient`) already send ADMIN headers.
 - **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
   Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
   real one.

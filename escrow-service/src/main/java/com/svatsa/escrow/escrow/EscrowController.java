@@ -1,6 +1,7 @@
 package com.svatsa.escrow.escrow;
 
 import com.svatsa.escrow.common.Actor;
+import com.svatsa.escrow.common.Authz;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -44,11 +45,14 @@ public class EscrowController {
      * POST /api/escrow/users
      */
     @PostMapping("/users")
-    public ResponseEntity<User> createUser(@RequestBody CreateUserRequest request) {
+    public ResponseEntity<User> createUser(Actor actor, @RequestBody CreateUserRequest request) {
+        // ADMIN only: the bootstrap admin (id 1, seeded by V11) creates everyone else, other
+        // admins included. A user creates a wallet, and with it an identity the resolver trusts.
+        Authz.requireAdmin(actor, "create users");
         if (request.name() == null || request.name().isBlank()) {
             return ResponseEntity.badRequest().build();
         }
-        if (request.role() == null || !request.role().matches("CLIENT|FREELANCER")) {
+        if (request.role() == null || !request.role().matches("CLIENT|FREELANCER|ADMIN")) {
             return ResponseEntity.badRequest().build();
         }
 

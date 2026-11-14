@@ -17,8 +17,8 @@ public final class Actors {
         return new Actor(id, Role.FREELANCER);
     }
 
-    /** Matches {@link ApiClient#admin()}. */
+    /** The bootstrap ADMIN (id 1, seeded by V11); matches {@link ApiClient#admin()}. */
     public static Actor admin() {
-        return new Actor(1, Role.ADMIN);
+        return new Actor(ApiClient.BOOTSTRAP_ADMIN_ID, Role.ADMIN);
     }
 }

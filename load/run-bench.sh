@@ -21,6 +21,8 @@ K6_IMAGE="${K6_IMAGE:-grafana/k6:0.54.0}"
 NETWORK="${NETWORK:-$(basename "$ROOT" | tr '[:upper:]' '[:lower:]')_escrow-network}"
 BASE_URL="http://escrow-service:8080"
 HOST_URL="http://localhost:8080"
+# The bootstrap ADMIN seeded by Flyway V11 (fixed id 1); the resolver checks id and role against users.
+BOOTSTRAP_ADMIN_ID=1
 WARMUP_SEC="${WARMUP_SEC:-30}"
 export RATELIMIT_ENABLED=false
 
@@ -92,7 +94,7 @@ k6_run() { # script label [extra -e args...]
     -e BASE_URL="$BASE_URL" -e RESULTS_DIR=/load/results -e LABEL="$label" "$@" \
     --summary-export "/load/results/$name-$label.summary.json" \
     "/load/$script" || echo "   (k6 exited non-zero: a threshold failed; results are still recorded)"
-  curl -s -H "X-Actor-Id: 1" -H "X-Actor-Role: ADMIN" "$HOST_URL/api/v1/admin/invariants" > "$RESULTS/$name-$label.invariants.json" || true
+  curl -s -H "X-Actor-Id: $BOOTSTRAP_ADMIN_ID" -H "X-Actor-Role: ADMIN" "$HOST_URL/api/v1/admin/invariants" > "$RESULTS/$name-$label.invariants.json" || true
   echo "   invariants: $(cat "$RESULTS/$name-$label.invariants.json")" | cut -c1-200
 }
 

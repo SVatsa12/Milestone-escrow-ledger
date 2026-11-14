@@ -12,7 +12,10 @@ export function actor(id, role) {
   return { 'X-Actor-Id': `${id}`, 'X-Actor-Role': role };
 }
 
-export const ADMIN = actor(1, 'ADMIN');
+// The bootstrap ADMIN seeded by Flyway V11 (fixed id 1). setup() creates every other user with it.
+// Actor ids must be real users and the role must be the stored one, or the API answers 401.
+export const BOOTSTRAP_ADMIN_ID = 1;
+export const ADMIN = actor(BOOTSTRAP_ADMIN_ID, 'ADMIN');
 
 // 409 (state conflict) and 422 (insufficient funds) are correct business answers under
 // load, not failures. Everything else outside 2xx counts toward http_req_failed.

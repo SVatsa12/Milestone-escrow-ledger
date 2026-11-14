@@ -9,8 +9,14 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class ActorWebConfig implements WebMvcConfigurer {
 
+    private final ActorArgumentResolver actorArgumentResolver;
+
+    public ActorWebConfig(ActorArgumentResolver actorArgumentResolver) {
+        this.actorArgumentResolver = actorArgumentResolver;
+    }
+
     @Override
     public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
-        resolvers.add(new ActorArgumentResolver());
+        resolvers.add(actorArgumentResolver);
     }
 }

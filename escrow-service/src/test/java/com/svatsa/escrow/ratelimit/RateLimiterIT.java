@@ -54,7 +54,8 @@ class RateLimiterIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         String run = UUID.randomUUID().toString().substring(0, 8);
-        actor = String.valueOf(Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L));
+        // A fresh ADMIN per test (own rate-limit window); actor ids must be real users now.
+        actor = String.valueOf(newAdmin().id());
         from = wallet("RL_FROM:" + run, 1_000_000);
         to = wallet("RL_TO:" + run, 0);
     }
@@ -93,7 +94,7 @@ class RateLimiterIT extends AbstractIntegrationTest {
             transfer(actor).andExpect(status().isCreated());
         }
         transfer(actor).andExpect(status().isTooManyRequests());
-        transfer(actor + "0").andExpect(status().isCreated());
+        transfer(String.valueOf(newAdmin().id())).andExpect(status().isCreated());
     }
 
     @Test
@@ -101,12 +102,14 @@ class RateLimiterIT extends AbstractIntegrationTest {
     void payoutsHaveTheStricterLimit() throws Exception {
         // Freelancer wallets start empty, so these are 422 INSUFFICIENT_FUNDS: what matters here
         // is that requests 1..5 get past the limiter and request 6 does not.
-        long freelancer = Long.parseLong(actor);
-        accountRepository.create("FREELANCER_WALLET:" + freelancer, AccountType.FREELANCER_WALLET, freelancer, false);
+        // A real freelancer: the users trigger creates their (empty) wallet.
+        String freelancer = String.valueOf(jdbcClient.sql(
+                "INSERT INTO users (name, role) VALUES ('rl-freelancer', 'FREELANCER') RETURNING id")
+            .query(Long.class).single());
         for (int i = 0; i < PAYOUT_LIMIT; i++) {
-            payout(actor).andExpect(status().isUnprocessableEntity());
+            payout(freelancer).andExpect(status().isUnprocessableEntity());
         }
-        payout(actor).andExpect(status().isTooManyRequests());
+        payout(freelancer).andExpect(status().isTooManyRequests());
     }
 
     @Test

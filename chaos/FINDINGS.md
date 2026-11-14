@@ -422,11 +422,13 @@ These were listed as open issues below; each is now closed with its own tests.
 - **Not built yet, so not testable yet** (no test can pass until the feature exists):
   - P12's provider → ledger direction (`MISSING_IN_LEDGER` for a provider SUCCESS we never
     recorded, or a Razorpay capture we never got a webhook for) and deposit reconciliation (a stub).
-  - P10's mock payout provider (the module is still an empty app; tests use `FakePayoutProvider`).
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
-- **The real provider service doesn't exist yet.** `mock-payout-provider` is still an empty
-  Spring Boot app. C1/C2 use the in-JVM `FakePayoutProvider`. K1/K2 (docker compose) need the
-  real one.
+- **escrow-service's tests still use the in-JVM `FakePayoutProvider`.** `mock-payout-provider`
+  now exists (port 9090, schema `provider`, modes set via `POST /admin/mode`, its own tests in
+  `./mvnw verify`, in the compose `app` profile behind Toxiproxy's 19090), but no escrow-service
+  test talks to it yet. Moving them over is the next task. While building it, compose was found to
+  mount a `toxiproxy-config.json` that didn't exist; it now defines the `postgres` (15432) and
+  `provider` (19090) proxies.
 - **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
   so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.
 

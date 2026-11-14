@@ -2,17 +2,28 @@ spring:
   application:
     name: mock-payout-provider
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/escrow?currentSchema=provider
+    # Same Postgres server as escrow-service, its own schema: the provider's state (what it has
+    # "paid") must survive escrow-service crashes, like a real bank's would.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:escrow}?currentSchema=provider
     username: ${DB_USER:escrow}
     password: ${DB_PASSWORD:escrow}
     hikari:
-      maximum-pool-size: 10
-      auto-commit: false
+      maximum-pool-size: 20
+      # No auto-commit: false here. With it off, statements outside a transaction were never
+      # committed (chaos/FINDINGS.md #4). Every write here is one auto-committed statement.
   flyway:
     enabled: true
     schemas: provider
 
 server:
   port: 9090
-  servlet:
-    context-path: /
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+provider:
+  # How often the ASYNC scheduler looks for PROCESSING payouts that are due to settle.
+  async-poll-ms: 1000

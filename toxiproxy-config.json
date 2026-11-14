@@ -1,0 +1,14 @@
+[
+  {
+    "name": "postgres",
+    "listen": "0.0.0.0:15432",
+    "upstream": "postgres:5432",
+    "enabled": true
+  },
+  {
+    "name": "provider",
+    "listen": "0.0.0.0:19090",
+    "upstream": "mock-payout-provider:9090",
+    "enabled": true
+  }
+]

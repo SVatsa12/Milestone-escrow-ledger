@@ -97,6 +97,7 @@ DRAFT ──fund──▶ FUNDED ──submit──▶ SUBMITTED ──approve�
 - Log with SLF4J, using structured key=value pairs. Never log secrets or full webhook bodies.
 - Every new SQL migration is a new Flyway file. Never edit an applied migration.
 - Integration tests use Testcontainers via `@ServiceConnection`. No H2 and no mocks for Postgres.
+- Before any git commit, run git rev-parse --show-toplevel and confirm it is this project's folder. If not, stop.
 
 ## Commands
 ```

@@ -1,0 +1,8 @@
+date: 2026-11-14T00:34:02Z
+host: MINGW64_NT-10.0-26200 3.6.3-086201ea.x86_64 x86_64
+12th Gen Intel(R) Core(TM) i5-12500H
+cores: 12
+logical: 16
+ram GB: 15.7
+docker: 16 CPUs, 8164081664 bytes visible to Docker
+limits: escrow-service cpus=2 mem=1g; postgres cpus=2

@@ -1,0 +1,17 @@
+{
+  "scenario": "replays",
+  "label": "bench",
+  "targetRps": 200,
+  "durationSec": 120,
+  "requests": 24001,
+  "achievedRps": 200,
+  "p50": 3.590605,
+  "p95": 99.469886,
+  "p99": 136.392797,
+  "errorRate": 0,
+  "droppedIterations": 0,
+  "insufficientFunds": 0,
+  "replayed": 7066,
+  "transferP95": 99.469886,
+  "thresholdsPassed": true
+}

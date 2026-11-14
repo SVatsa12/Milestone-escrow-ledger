@@ -1,0 +1,17 @@
+{
+  "scenario": "transfers",
+  "label": "knee-200",
+  "targetRps": "200->200",
+  "durationSec": 60,
+  "requests": 11999,
+  "achievedRps": 200,
+  "p50": 3.659451,
+  "p95": 30.196127200000006,
+  "p99": 52.49527274000004,
+  "errorRate": 0,
+  "droppedIterations": 0,
+  "insufficientFunds": 0,
+  "replayed": 0,
+  "transferP95": 30.196127200000006,
+  "thresholdsPassed": true
+}

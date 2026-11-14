@@ -1,0 +1,17 @@
+{
+  "scenario": "hot-account",
+  "label": "bench",
+  "targetRps": 200,
+  "durationSec": 120,
+  "requests": 23944,
+  "achievedRps": 199.5,
+  "p50": 6.323150500000001,
+  "p95": 173.68181264999984,
+  "p99": 1090.867644419999,
+  "errorRate": 0,
+  "droppedIterations": 56,
+  "insufficientFunds": 0,
+  "replayed": 0,
+  "transferP95": 173.68181264999984,
+  "thresholdsPassed": false
+}

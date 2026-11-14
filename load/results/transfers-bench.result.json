@@ -1,0 +1,17 @@
+{
+  "scenario": "transfers",
+  "label": "bench",
+  "targetRps": "50->1000",
+  "durationSec": 300,
+  "requests": 124956,
+  "achievedRps": 416.5,
+  "p50": 877.369814,
+  "p95": 2437.189038,
+  "p99": 3022.0404433499966,
+  "errorRate": 0,
+  "droppedIterations": 32543,
+  "insufficientFunds": 0,
+  "replayed": 0,
+  "transferP95": 2437.189038,
+  "thresholdsPassed": false
+}

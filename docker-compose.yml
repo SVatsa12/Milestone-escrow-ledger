@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    cpus: 2.0   # fixed resources so benchmark numbers are comparable (P15)
     environment:
       POSTGRES_DB: escrow
       POSTGRES_USER: escrow
@@ -130,8 +131,11 @@ services:
     build:
       context: .   # the Dockerfile copies escrow-service/ and the parent pom.xml
       dockerfile: escrow-service/Dockerfile
+    cpus: 2.0      # fixed resources so benchmark numbers are comparable (P15)
+    mem_limit: 1g
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/escrow
+      # ESCROW_DB lets load/run-bench.sh point each run at its own fresh database.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${ESCROW_DB:-escrow}
       SPRING_DATASOURCE_USERNAME: escrow
       SPRING_DATASOURCE_PASSWORD: escrow
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -139,6 +143,11 @@ services:
       REDIS_PORT: 6379
       PAYOUT_PROVIDER_URL: http://mock-payout-provider:9090
       SPRING_PROFILES_ACTIVE: ""
+      # Knobs for load/run-bench.sh (P15). Defaults match application.yml.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_POOL:-20}
+      SPRING_THREADS_VIRTUAL_ENABLED: ${VIRTUAL_THREADS:-true}
+      RATELIMIT_ENABLED: ${RATELIMIT_ENABLED:-true}
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     ports:
       - "8080:8080"
     depends_on:

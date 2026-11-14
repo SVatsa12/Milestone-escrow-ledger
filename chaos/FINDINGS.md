@@ -163,6 +163,11 @@ Regression: `AuditLogConsumerIT` waits for a ledger entry's event to land in `au
   against the old relay, which still had 3,624 pending after 10s.
 
 ## Open issues (not fixed yet)
+- **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
+  and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)
+  instead of `fund:project:{id}`, `release:milestone:{id}`, and so on. Money is still safe today,
+  because the conditional state update rejects the second transition and rolls back its posting.
+  But the ledger-level guard of invariant 8 is missing for these flows.
 - **Remaining `@Disabled` integration tests.** `AbstractIntegrationTest` still uses H2, so the
   P2–P13 integration tests (47 of them) are still `@Disabled`. Moving them onto
   `AbstractToxiproxyIT` (or a plain Postgres base) will likely surface more bugs like #5 and #6.

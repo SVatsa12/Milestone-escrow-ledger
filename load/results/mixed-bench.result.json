@@ -1,0 +1,17 @@
+{
+  "scenario": "mixed",
+  "label": "bench",
+  "targetRps": 150,
+  "durationSec": 120,
+  "requests": 18001,
+  "achievedRps": 150,
+  "p50": 1.356959,
+  "p95": 13.760441,
+  "p99": 73.957023,
+  "errorRate": 0,
+  "droppedIterations": 0,
+  "insufficientFunds": 28,
+  "replayed": 0,
+  "transferP95": 47.60707974999987,
+  "thresholdsPassed": true
+}

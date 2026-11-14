@@ -1,0 +1,17 @@
+{
+  "scenario": "transfers",
+  "label": "tune-pool10-vtfalse",
+  "targetRps": "50->800",
+  "durationSec": 120,
+  "requests": 49355,
+  "achievedRps": 411.3,
+  "p50": 80.770132,
+  "p95": 1358.3316796999986,
+  "p99": 1700.6769440599999,
+  "errorRate": 0,
+  "droppedIterations": 1642,
+  "insufficientFunds": 0,
+  "replayed": 0,
+  "transferP95": 1358.3316796999986,
+  "thresholdsPassed": false
+}

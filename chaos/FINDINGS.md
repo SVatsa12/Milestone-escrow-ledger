@@ -172,6 +172,14 @@ fire by a test that only corrupts one balance. Many old tests were themselves wr
 `accounts.balance` directly, never moved the clock, asserted nothing, or counted global rows);
 those were rewritten in the test commit. The code bugs they then exposed are below.
 
+### 15. InvariantChecker reported "no violations" whenever a check failed to run
+`check()` wrapped all nine checks in `catch (Exception e) { return List.of(); }` ("tables may not
+exist, e.g. H2"), and I7/I8/I9 each had their own swallowing catch. On H2 the after-test invariant
+assertion could never fail, and on Postgres any broken check query would silently disable it, along
+with `GET /admin/invariants` and the reconciliation job. **Fix:** no try/catch; a check that can't
+run fails loudly.
+Regression: every integration test's @AfterEach (proven with a balance-corrupting test).
+
 ## Open issues (not fixed yet)
 - **Escrow flows don't use the AGENTS.md business idempotency keys.** Fund, release, dispute
   and refund post their journal entries with the *client's* Idempotency-Key (type `TRANSFER`)

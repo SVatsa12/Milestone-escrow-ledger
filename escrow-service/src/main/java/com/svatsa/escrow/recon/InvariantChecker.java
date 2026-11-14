@@ -54,23 +54,20 @@ public class InvariantChecker {
      * Check all invariants (I1-I9) and return a list of violations (empty if all OK).
      */
     public List<Violation> check() {
-        try {
-            List<Violation> violations = new ArrayList<>();
-            violations.addAll(checkI1());
-            violations.addAll(checkI2());
-            violations.addAll(checkI3());
-            violations.addAll(checkI4());
-            violations.addAll(checkI5());
-            violations.addAll(checkI6());
-            violations.addAll(checkI7());
-            violations.addAll(checkI8());
-            violations.addAll(checkI9());
-            return violations;
-        } catch (Exception e) {
-            // If tables don't exist (e.g., H2 test mode), return no violations
-            // This allows tests to pass even if migrations haven't run
-            return List.of();
-        }
+        // No try/catch: a check that cannot run must fail loudly. This used to catch every
+        // exception and return "no violations" (so it passed on H2, where the tables didn't
+        // exist), which meant the @AfterEach invariant assertion proved nothing.
+        List<Violation> violations = new ArrayList<>();
+        violations.addAll(checkI1());
+        violations.addAll(checkI2());
+        violations.addAll(checkI3());
+        violations.addAll(checkI4());
+        violations.addAll(checkI5());
+        violations.addAll(checkI6());
+        violations.addAll(checkI7());
+        violations.addAll(checkI8());
+        violations.addAll(checkI9());
+        return violations;
     }
 
     /**
@@ -270,28 +267,24 @@ public class InvariantChecker {
     private List<Violation> checkI7() {
         List<Violation> violations = new ArrayList<>();
 
-        try {
-            Long accountBalance = jdbcClient.sql(
-                "SELECT COALESCE(balance, 0) FROM accounts WHERE code = 'PAYOUT_IN_FLIGHT'")
-                .query(Long.class)
-                .optional()
-                .orElse(0L);
+        Long accountBalance = jdbcClient.sql(
+            "SELECT COALESCE(balance, 0) FROM accounts WHERE code = 'PAYOUT_IN_FLIGHT'")
+            .query(Long.class)
+            .optional()
+            .orElse(0L);
 
-            Long payoutSum = jdbcClient.sql("""
-                SELECT COALESCE(SUM(amount_paise), 0)
-                FROM payouts
-                WHERE state IN ('RESERVED', 'PROCESSING', 'UNKNOWN')
-                """)
-                .query(Long.class)
-                .single();
+        Long payoutSum = jdbcClient.sql("""
+            SELECT COALESCE(SUM(amount_paise), 0)
+            FROM payouts
+            WHERE state IN ('RESERVED', 'PROCESSING', 'UNKNOWN')
+            """)
+            .query(Long.class)
+            .single();
 
-            if (accountBalance != payoutSum) {
-                violations.add(new Violation("I7",
-                    "PAYOUT_IN_FLIGHT account balance (" + accountBalance + 
-                    ") != pending payouts sum (" + payoutSum + ")"));
-            }
-        } catch (Exception e) {
-            // Payouts table may not exist yet
+        if (accountBalance != payoutSum) {
+            violations.add(new Violation("I7",
+                "PAYOUT_IN_FLIGHT account balance (" + accountBalance + 
+                ") != pending payouts sum (" + payoutSum + ")"));
         }
 
         return violations;
@@ -304,54 +297,50 @@ public class InvariantChecker {
     private List<Violation> checkI8() {
         List<Violation> violations = new ArrayList<>();
 
-        try {
-            // Check CONFIRMED payouts
-            List<String> confirmedMismatches = jdbcClient.sql("""
-                SELECT p.id
-                FROM payouts p
-                WHERE p.state = 'CONFIRMED'
-                AND (
-                    (SELECT COUNT(*) FROM journal_entries 
-                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
-                     AND type = 'PAYOUT_CONFIRM') <> 1
-                    OR
-                    (SELECT COUNT(*) FROM journal_entries 
-                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
-                     AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) > 0
-                )
-                """)
-                .query(String.class)
-                .list();
+        // Check CONFIRMED payouts
+        List<String> confirmedMismatches = jdbcClient.sql("""
+            SELECT p.id
+            FROM payouts p
+            WHERE p.state = 'CONFIRMED'
+            AND (
+                (SELECT COUNT(*) FROM journal_entries 
+                 WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                 AND type = 'PAYOUT_CONFIRM') <> 1
+                OR
+                (SELECT COUNT(*) FROM journal_entries 
+                 WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                 AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) > 0
+            )
+            """)
+            .query(String.class)
+            .list();
 
-            for (String payoutId : confirmedMismatches) {
-                violations.add(new Violation("I8",
-                    "CONFIRMED payout " + payoutId + " missing or duplicate confirm/reverse entry"));
-            }
+        for (String payoutId : confirmedMismatches) {
+            violations.add(new Violation("I8",
+                "CONFIRMED payout " + payoutId + " missing or duplicate confirm/reverse entry"));
+        }
 
-            // Check FAILED/CANCELLED payouts
-            List<String> failedMismatches = jdbcClient.sql("""
-                SELECT p.id
-                FROM payouts p
-                WHERE p.state IN ('FAILED', 'CANCELLED')
-                AND (
-                    (SELECT COUNT(*) FROM journal_entries 
-                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
-                     AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) <> 1
-                    OR
-                    (SELECT COUNT(*) FROM journal_entries 
-                     WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
-                     AND type = 'PAYOUT_CONFIRM') > 0
-                )
-                """)
-                .query(String.class)
-                .list();
+        // Check FAILED/CANCELLED payouts
+        List<String> failedMismatches = jdbcClient.sql("""
+            SELECT p.id
+            FROM payouts p
+            WHERE p.state IN ('FAILED', 'CANCELLED')
+            AND (
+                (SELECT COUNT(*) FROM journal_entries 
+                 WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                 AND type IN ('PAYOUT_REVERSE', 'PAYOUT_CANCEL')) <> 1
+                OR
+                (SELECT COUNT(*) FROM journal_entries 
+                 WHERE reference_type = 'PAYOUT' AND reference_id = p.id::TEXT 
+                 AND type = 'PAYOUT_CONFIRM') > 0
+            )
+            """)
+            .query(String.class)
+            .list();
 
-            for (String payoutId : failedMismatches) {
-                violations.add(new Violation("I8",
-                    "FAILED/CANCELLED payout " + payoutId + " missing or duplicate reverse/confirm entry"));
-            }
-        } catch (Exception e) {
-            // Payouts table may not exist yet
+        for (String payoutId : failedMismatches) {
+            violations.add(new Violation("I8",
+                "FAILED/CANCELLED payout " + payoutId + " missing or duplicate reverse/confirm entry"));
         }
 
         return violations;
@@ -364,23 +353,19 @@ public class InvariantChecker {
     private List<Violation> checkI9() {
         List<Violation> violations = new ArrayList<>();
 
-        try {
-            Long staleCount = jdbcClient.sql("""
-                SELECT COUNT(*)
-                FROM outbox
-                WHERE published_at IS NULL
-                AND created_at < now() - INTERVAL '5 minutes'
-                """)
-                .query(Long.class)
-                .single();
+        Long staleCount = jdbcClient.sql("""
+            SELECT COUNT(*)
+            FROM outbox
+            WHERE published_at IS NULL
+            AND created_at < now() - INTERVAL '5 minutes'
+            """)
+            .query(Long.class)
+            .single();
 
-            if (staleCount != null && staleCount > 0) {
-                violations.add(new Violation("I9_WARN",
-                    "Found " + staleCount + " unpublished outbox rows older than 5 minutes " +
-                    "(relay may be stuck)"));
-            }
-        } catch (Exception e) {
-            // Outbox table may not exist yet
+        if (staleCount != null && staleCount > 0) {
+            violations.add(new Violation("I9_WARN",
+                "Found " + staleCount + " unpublished outbox rows older than 5 minutes " +
+                "(relay may be stuck)"));
         }
 
         return violations;

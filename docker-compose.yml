@@ -149,12 +149,15 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PAYOUT_PROVIDER_URL: http://mock-payout-provider:9090
-      SPRING_PROFILES_ACTIVE: ""
+      # chaos/kill_mid_saga.py sets SPRING_PROFILES_ACTIVE=chaos and CHAOS_CRASH_POINT (K1).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      CHAOS_CRASH_POINT: ${CHAOS_CRASH_POINT:-NONE}
       # Knobs for load/run-bench.sh (P15). Defaults match application.yml.
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${HIKARI_POOL:-20}
       SPRING_THREADS_VIRTUAL_ENABLED: ${VIRTUAL_THREADS:-true}
       RATELIMIT_ENABLED: ${RATELIMIT_ENABLED:-true}
-      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
+      # EXTRA_JAVA_OPTS: e.g. -Djdk.tracePinnedThreads=full when chasing virtual-thread pinning.
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 ${EXTRA_JAVA_OPTS:-}
     ports:
       - "8080:8080"
     depends_on:

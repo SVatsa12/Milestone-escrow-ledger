@@ -541,6 +541,35 @@ commit, in two different tests. Neither was a production race.
   OutboxBatchPublisherTest 30/30 plain and 30/30 with 2 processors; the full suite green alongside a
   loop. Before: CI 1 pass in 3 attempts of the same commit; locally 8/8 (the boundary case is rare).
 
+### 44. Half the chaos suite only pretended to inject faults
+An audit of P14 found C1 (fixed earlier, #40), C4, C5 and C6 were `@Disabled` templates that printed
+"(Simulating: …)" and asserted against counters they incremented themselves; C4 wrote to a
+`processed_events` table instead of calling the webhook. K1 couldn't fire: nothing read
+`chaos.crash-point`, so `CHAOS_CRASH_POINT=AFTER_RESERVE` armed nothing and no container ever died
+mid-saga. K2 killed a container named `escrow-service` (compose calls it
+`milestone-escrow-ledger-escrow-service-1`), needed a local `k6`, and reported 0 operations. Only
+C2 and C3 were real, and no scenario reconciled.
+- **Fix:**
+  - **C4** sends 600 signed webhooks (20 payments × 25 `payment.captured` + 5 `order.paid`)
+    shuffled from 32 threads to the real endpoint.
+  - **C5** freezes the Kafka broker for 30 s (`docker pause`) during 200 HTTP escrow operations.
+  - **C6** races client approve, freelancer dispute and 4 auto-release threads on 100 milestones
+    at the exact review-window boundary.
+  - **K1/K2** are Python (`chaos/kill_mid_saga.py`, `chaos/kill_under_load.py`, shared
+    `chaos/stack.py`). K1 really halts the JVM at each crash point and checks the container's exit
+    code is 137. K2 runs `mixed.js` and `docker kill -s KILL`s the app every 15 s of uptime
+    (checking 137 each time). It then requires exactly one journal entry per acknowledged
+    operation under its business key.
+  - **`ChaosCrashPointLoader`** (only under the `chaos` profile) arms the crash point from
+    `chaos.crash-point`. Docker compose passes `SPRING_PROFILES_ACTIVE` and `CHAOS_CRASH_POINT`.
+  - **Every scenario ends by reconciling its day with both sources (0 mismatches required)**
+    and writes `chaos/results/<scenario>-<timestamp>.json` with operations, violations,
+    mismatches and result. JUnit scenarios each get their own day on the shared clock, so earlier
+    scenarios in the JVM can't pollute "today".
+  - **`chaos/run_all.py`** runs everything and prints the table. The bash scripts are gone.
+- **Regression:** `ChaosCrashPointLoaderTest`: the crash point is armed from config under the
+  `chaos` profile, and not without it.
+
 ### 45. Kafka consumers on virtual threads froze the whole app after a kill -9 (found by chaos K2)
 - **Symptom:** in K2, after the first `docker kill -s KILL`, the restarted app logged
   "Consumer thread failed to start" twice (30 s apart), then "Started EscrowServiceApplication in
@@ -572,9 +601,6 @@ commit, in two different tests. Neither was a production race.
   its own transaction and commits before the sends, so two relay instances could claim the same
   rows: duplicates (deduped by consumers) and per-aggregate reordering. Safe with today's single
   instance per deployment; not with several.
-- **ChaosConfig never reads `chaos.crash-point`.** The crash point is only settable from code,
-  so K1's `CHAOS_CRASH_POINT=...` env var won't work yet.
-
 ## Scenario notes
 - **C2:** RANDOM provider plus flapping `reset_peer` toxics (upstream, timeout 0: request lost;
   downstream, timeout 50ms against a 150ms provider: provider paid, response lost). The first

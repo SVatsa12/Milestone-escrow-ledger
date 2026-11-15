@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Leader election for the outbox relay: only the instance holding a Postgres SESSION advisory lock
@@ -30,6 +31,11 @@ import java.sql.SQLException;
  * middle of a batch finishes sending that batch (at most {@code batch-size} rows, bounded by the ack
  * timeout) while the new leader may already be sending. That overlap can duplicate (consumers dedupe
  * by eventId) and, within that one batch window, reorder. There is no fencing token.
+ *
+ * Mutual exclusion is a {@link ReentrantLock}, never {@code synchronized}: the relay ticks on a
+ * virtual thread, and on JDK 21 blocking (JDBC I/O, waiting for a pooled connection) inside a monitor
+ * pins the carrier. Under load after a kill -9 that deadlocked the app: the pinned relay waited for a
+ * connection only unmounted virtual threads could return (chaos/FINDINGS.md #55).
  */
 public class OutboxRelayLeadership implements AutoCloseable {
 
@@ -42,6 +48,7 @@ public class OutboxRelayLeadership implements AutoCloseable {
     private final String instance;
     private Connection connection;     // non-null only while we hold the lock
     private volatile boolean leader;
+    private final ReentrantLock lock = new ReentrantLock();
 
     public OutboxRelayLeadership(DataSource dataSource, String instance) {
         this.dataSource = dataSource;
@@ -61,16 +68,21 @@ public class OutboxRelayLeadership implements AutoCloseable {
      * Called before each batch: true if this instance leads now (still, or newly). Never throws: a
      * database error just means "not the leader this tick".
      */
-    public synchronized boolean ensureLeadership() {
-        if (connection != null) {
-            if (stillHeld()) {
-                return true;
+    public boolean ensureLeadership() {
+        lock.lock();
+        try {
+            if (connection != null) {
+                if (stillHeld()) {
+                    return true;
+                }
+                log.warn("outbox.relay.leadership-lost instance={} reason=leader-connection-broken", instance);
+                discard();
             }
-            log.warn("outbox.relay.leadership-lost instance={} reason=leader-connection-broken", instance);
-            discard();
+            tryAcquire();
+            return leader;
+        } finally {
+            lock.unlock();
         }
-        tryAcquire();
-        return leader;
     }
 
     private boolean stillHeld() {
@@ -139,21 +151,26 @@ public class OutboxRelayLeadership implements AutoCloseable {
      * explicitly before handing it back; otherwise the lock would outlive this instance.
      */
     @Override
-    public synchronized void close() {
-        if (connection == null) {
-            leader = false;
-            return;
-        }
-        try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_unlock(?)")) {
-            ps.setLong(1, LOCK_KEY);
-            ps.execute();
-            connection.close();
-            log.info("outbox.relay.leadership-released instance={}", instance);
-        } catch (SQLException e) {
-            evict(connection); // can't unlock: drop the session so Postgres releases the lock
+    public void close() {
+        lock.lock();
+        try {
+            if (connection == null) {
+                leader = false;
+                return;
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+                ps.setLong(1, LOCK_KEY);
+                ps.execute();
+                connection.close();
+                log.info("outbox.relay.leadership-released instance={}", instance);
+            } catch (SQLException e) {
+                evict(connection); // can't unlock: drop the session so Postgres releases the lock
+            } finally {
+                connection = null;
+                leader = false;
+            }
         } finally {
-            connection = null;
-            leader = false;
+            lock.unlock();
         }
     }
 }

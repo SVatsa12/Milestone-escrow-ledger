@@ -98,6 +98,37 @@ class ArchitectureRulesTest {
             .isInstanceOf(AssertionError.class);
     }
 
+    /**
+     * No synchronized methods in main code. Scheduled jobs and HTTP requests run on virtual threads,
+     * and on JDK 21 (the runtime image) blocking inside a monitor pins the carrier; a 2-CPU container
+     * has 2 carriers. FINDINGS #45 (Kafka client) and #55 (the relay's leader lock) both froze the app
+     * this way. Use java.util.concurrent locks. (Synchronized BLOCKS are invisible to ArchUnit;
+     * OutboxRelayLeadershipPinningIT checks the relay with JFR.)
+     */
+    private static com.tngtech.archunit.lang.ArchRule noSynchronizedMethods() {
+        return com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods()
+            .that().areDeclaredInClassesThat().resideInAPackage("com.svatsa.escrow..")
+            .should().haveModifier(com.tngtech.archunit.core.domain.JavaModifier.SYNCHRONIZED)
+            .because("virtual threads pin their carrier while blocked in a monitor on JDK 21 (FINDINGS #45, #55)");
+    }
+
+    @Test
+    @DisplayName("no synchronized methods in main code (virtual-thread pinning)")
+    void noSynchronizedMethodsInMain() {
+        noSynchronizedMethods().allowEmptyShould(true).check(MAIN);
+    }
+
+    @Test
+    @DisplayName("the synchronized rule catches a synchronized method")
+    void synchronizedRuleCatchesViolations() {
+        assertThatThrownBy(() -> noSynchronizedMethods().check(new ClassFileImporter().importClasses(LocksAMonitor.class)))
+            .isInstanceOf(AssertionError.class);
+    }
+
+    static class LocksAMonitor {
+        synchronized void f() { }
+    }
+
     static class SendsDirectly {
         void f(org.springframework.kafka.core.KafkaTemplate<String, String> t) { t.send("escrow.milestone-events", "x"); }
     }

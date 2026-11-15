@@ -748,6 +748,38 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
 - **Lesson:** a passing chaos scenario can still have stopped exercising its fault. C6 records who
   won, and that note is what showed it.
 
+### 55. The relay's leader lock pinned virtual threads and froze the app after a kill -9 (found by chaos K2)
+- **Symptom:** in the run checking #54, K2's first restart after `docker kill -s KILL` logged
+  "Started EscrowServiceApplication in 5.7 s" and then never answered `/actuator/health`. The
+  4-minute wait timed out; there was no standby and no OOM. A SIGQUIT dump showed both carrier
+  threads, `ForkJoinPool-1-worker-1/2`, "Carrying virtual thread" for the whole 567 s uptime with
+  45–78 ms of CPU, the same signature as #45. There was no `leadership-acquired` line after the
+  restart.
+- **Evidence:** a kill/restart loop with `-Djdk.tracePinnedThreads=full` showed the relay's
+  scheduled task (`VirtualThread[...,scheduling-2]`) pinned in
+  `OutboxRelayLeadership.ensureLeadership <== monitors:1`, around `HikariProxyPreparedStatement.executeQuery`
+  (`pg_try_advisory_lock`) and `HikariProxyConnection.isValid`. 16 pinned traces in 3 restarts.
+- **Root cause:** #52 made `ensureLeadership()` and `close()` `synchronized`, and both do JDBC I/O.
+  Spring runs `@Scheduled` tasks on virtual threads here, and on JDK 21 (the runtime image) a
+  virtual thread that blocks inside a monitor pins its carrier. Without load, each pin was
+  milliseconds. Under K2's load right after a restart, the pool was exhausted: the pinned relay
+  waited for a connection that only unmounted virtual threads (Tomcat requests) could return, and
+  with the 2-CPU container's two carriers pinned, nothing could run.
+  - **Why it hid:** local Maven runs on JDK 24, where JEP 491 stopped monitors pinning. So
+    `OutboxRelayLeaderIT` and earlier K2 runs passed; only the JDK 21 container under load showed it.
+- **Fix:** a `ReentrantLock` instead of `synchronized`. A virtual thread blocked on it, or on I/O
+  under it, unmounts.
+  - With the fix in the JDK 21 image, the same traced kill/restart loop recorded 0 pinned traces,
+    and leadership was re-acquired after every restart.
+- **Regression:**
+  - `OutboxRelayLeadershipPinningIT` runs the leadership cycle on a virtual thread under a JFR
+    `jdk.VirtualThreadPinned` recording (threshold 0) and fails on any event with
+    `OutboxRelayLeadership` on the stack. Run on JDK 23 (which still pins), it fails against the
+    old `synchronized` code and passes with the fix. CI runs it on JDK 21.
+  - `ArchitectureRulesTest.noSynchronizedMethodsInMain` forbids `synchronized` methods in main
+    code (ArchUnit can't see `synchronized` blocks; there are none).
+- **Lesson:** run the virtual-thread checks on the runtime's JDK. A newer local JDK hides pinning.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

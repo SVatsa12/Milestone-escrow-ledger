@@ -35,10 +35,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * a window.
  */
 // Rate limiting on (the base turns it off for everyone else), which makes this the one test class with
-// its own Spring context. That context must not run a second OutboxRelay: the relay is only correct
-// as a single instance (its claim transaction ends before it sends, FINDINGS #51), and two relays in
-// one test JVM reordered an aggregate's events in CI. The base context's relay publishes this
-// class's rows.
+// its own Spring context. That context runs no second OutboxRelay: two relays in one test JVM once
+// reordered an aggregate's events in CI (FINDINGS #51). The relay's leader lock (#52) now makes a
+// second relay safe, but one relay per JVM keeps the tests simple. The base context's relay
+// publishes this class's rows.
 @TestPropertySource(properties = {"escrow.ratelimit.enabled=true", "escrow.outbox.relay.enabled=false"})
 @DisplayName("Rate limiter")
 class RateLimiterIT extends AbstractIntegrationTest {

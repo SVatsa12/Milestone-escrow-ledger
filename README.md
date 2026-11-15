@@ -169,11 +169,19 @@ Reconciliation records any violation as a `LEDGER_INVARIANT` mismatch.
   commits, then sees the row and replays the stored response (`Idempotent-Replayed: true`). The
   same key with a different body is `422 IDEMPOTENCY_KEY_REUSED`. Proof: 50 simultaneous identical
   requests give one journal entry, 50 identical responses and 49 replays (`sameKeyRaceThroughTheApiCreatesOneEntry`).
-- **Jobs claim with `FOR UPDATE SKIP LOCKED`**: the auto-release job, the payout recovery job and
-  the outbox relay. Any number of instances can run without claiming the same row. Approve,
+- **Jobs claim with `FOR UPDATE SKIP LOCKED`**: the auto-release job and the payout recovery job.
+  Any number of instances can run without claiming the same row. Approve,
   dispute and auto-release lock the milestone row first and the accounts second, so a client
   approving exactly when the job fires can't deadlock ([FINDINGS #32](chaos/FINDINGS.md),
   `AutoReleaseIT.approveVersusAutoReleaseReleasesOnce`).
+- **One active outbox relay, with failover.** SKIP LOCKED alone isn't enough for the relay: two
+  relays could each take a different event of the same aggregate and send them out of order
+  ([FINDINGS #51](chaos/FINDINGS.md)). Each relay runs a batch only while it holds a Postgres
+  *session* advisory lock on a dedicated connection. The others skip the tick and retry. When the
+  leader dies, its session ends, the lock is released, and the next relay to tick takes over.
+  [OutboxRelayLeaderIT](escrow-service/src/test/java/com/svatsa/escrow/outbox/OutboxRelayLeaderIT.java)
+  runs two relays over 1,000 events (only one publishes, order holds) and kills the leader's session
+  (the other takes over within a few ticks). The gauge `outbox.relay.leader` is 1 on the leader.
 - **Per-aggregate outbox ordering.** The relay keys Kafka records by `aggregateType:aggregateId`,
   so one project's events share a partition. Within a batch it marks published only each
   aggregate's prefix of acknowledged rows before the first failure. **Documented limit**
@@ -342,8 +350,10 @@ Each of these has a regression test outside the chaos tag. Full write-ups: [chao
 - **The rate limiter uses fixed 60 s windows in Redis**, so a client can send up to 2× the limit
   across a window boundary (pinned by `RateLimiterIT.aBurstAcrossAWindowBoundaryIsCountedInTwoWindows`).
   A sliding window or token bucket would fix it.
-- **Polling outbox relay.** It's simple and correct, but it adds latency and polls the database.
-  Debezium (CDC on the WAL) would stream outbox rows with no polling.
+- **Polling outbox relay: single active relay; failover via advisory lock.** It's simple and keeps
+  per-aggregate order, but publishing doesn't scale past one instance, it adds polling latency, and
+  a leader that loses its session mid-batch can overlap with the new leader for that one batch (no
+  fencing token). Debezium (CDC on the WAL) would stream outbox rows with no polling and no leader.
 - **Postings grow forever.** Next: partition `postings` by month, and snapshot balances so I3 can
   check incrementally.
 - **Hot accounts** serialize on one row lock (hot-account p99 195 ms). Next: split a hot account

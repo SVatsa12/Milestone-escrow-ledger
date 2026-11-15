@@ -27,7 +27,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * - Ordered per aggregate: rows are claimed ORDER BY id and keyed by aggregate (one partition), and a
  *   later row of an aggregate is never marked published ahead of an earlier failed one
  *   (OutboxBatchPublisher explains the one remaining gap).
- * - Safe concurrent execution: multiple instances use SKIP LOCKED, so no row is claimed twice.
+ * - One active relay: every batch runs only while this instance holds the Postgres session advisory
+ *   lock {@link OutboxRelayLeadership#LOCK_KEY}. Other instances skip the tick and keep trying, so
+ *   when the leader dies (its connection closes, Postgres releases the lock) one of them takes over.
+ *   Two relays publishing at once could reorder an aggregate's events (chaos/FINDINGS.md #51, #52).
+ *   Metric: outbox.relay.leader (1 or 0).
  * - Exponential backoff: failed rows are retried after 2^attempts × 100ms, capped at 10 minutes.
  *
  * Comments explain why certain patterns are used (e.g., SKIP LOCKED makes distributed queues safe).
@@ -46,6 +50,7 @@ public class OutboxRelay {
 
     private final int batchSize;
     private final java.time.Duration ackTimeout;
+    private final OutboxRelayLeadership leadership;
 
     public OutboxRelay(
         JdbcClient jdbcClient,
@@ -54,9 +59,14 @@ public class OutboxRelay {
         TransactionTemplate transactionTemplate,
         io.micrometer.core.instrument.MeterRegistry meterRegistry,
         Clock clock,
+        javax.sql.DataSource dataSource,
         @Value("${escrow.outbox.relay.batch-size:100}") int batchSize,
         @Value("${escrow.outbox.relay.ack-timeout:5s}") java.time.Duration ackTimeout
     ) {
+        this.leadership = new OutboxRelayLeadership(dataSource, "relay-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+        io.micrometer.core.instrument.Gauge.builder("outbox.relay.leader", leadership, l -> l.isLeader() ? 1 : 0)
+            .description("1 while this instance holds the outbox relay's advisory lock and publishes, else 0")
+            .register(meterRegistry);
         this.batchSize = batchSize;
         this.ackTimeout = ackTimeout;
         this.jdbcClient = jdbcClient;
@@ -84,6 +94,10 @@ public class OutboxRelay {
         // Keep draining while batches come back full, instead of waiting a poll interval
         // between batches. Bounded so one run can't hog the scheduler thread forever.
         for (int i = 0; i < MAX_BATCHES_PER_RUN; i++) {
+            // Only the leader publishes; checked before every batch so a lost session stops us here.
+            if (!leadership.ensureLeadership()) {
+                return;
+            }
             List<OutboxRow> rows = transactionTemplate.execute(tx -> claimBatch());
             if (rows == null || rows.isEmpty()) {
                 return;
@@ -96,6 +110,17 @@ public class OutboxRelay {
     }
 
     private static final int MAX_BATCHES_PER_RUN = 50;
+
+    /** Whether this instance currently holds the relay lock. */
+    public boolean isLeader() {
+        return leadership.isLeader();
+    }
+
+    /** Step down: release the advisory lock so another instance can lead at once (shutdown, tests). */
+    @jakarta.annotation.PreDestroy
+    public void stepDown() {
+        leadership.close();
+    }
 
     /**
      * Send the whole batch asynchronously, wait for the acks, then mark the acked rows published in

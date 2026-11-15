@@ -698,19 +698,44 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   RateLimiterIT then ConsumersKafkaIT, in CI's order (`-Dfailsafe.runOrder=reversealphabetical`),
   passed. The race is timing-dependent, so one passing run doesn't prove it on its own; the
   single-relay setup does.
-- **Still open (below):** in production, more than one relay instance can reorder an aggregate's
-  events. The proper fix holds the claim through the send and takes a per-aggregate lock, so a
-  second relay can't take a later event of an aggregate whose earlier event is in flight.
+- **Production:** closed by #52 (a leader lock: only one relay publishes at a time).
+
+### 52. Two relay instances could reorder an aggregate's events: closed with a leader lock
+- **Gap:** the open issue behind #51. The relay's `FOR UPDATE SKIP LOCKED` claim commits before it
+  sends, so with two instances, relay B could skip relay A's locked earlier event and send a later
+  event of the same aggregate first. Duplicates were already harmless (consumers dedupe by
+  eventId); reordering wasn't. The relay was safe only as a single instance per deployment.
+- **Fix:** `OutboxRelayLeadership`. A relay runs a batch only while it holds a Postgres **session**
+  advisory lock (`pg_try_advisory_lock`, fixed key `0x657363726f774f42`) on a dedicated connection
+  kept for as long as it leads. The check runs before every batch.
+  - Followers borrow a connection, fail the try, return it to the pool, and retry next tick.
+  - A leader whose connection is broken (`isValid` fails) evicts it from the pool, which closes
+    the session, and becomes a follower.
+  - When a leader process dies, its connection closes, Postgres releases the lock, and another
+    instance takes over.
+  - On shutdown, the leader calls `pg_advisory_unlock` before returning its connection, because
+    closing a pooled connection doesn't end the session.
+  - The gauge `outbox.relay.leader` is 1 on the leader and 0 elsewhere.
+- **Limits (documented):**
+  - Publishing never scales past one instance.
+  - Leadership is checked between batches, with no fencing token. A leader that loses its session
+    mid-batch finishes that batch, at most `batch-size` rows bounded by the ack timeout, possibly
+    overlapping the new leader once.
+- **Regression:** `OutboxRelayLeaderIT` runs two relays against the same Postgres and Kafka: the
+  application's scheduled relay A, and B built in the test and ticking every 20 ms.
+  - 1,000 events over 20 aggregates on a 3-partition topic: B publishes none, and every aggregate
+    arrives in seq order 0..49.
+  - Killing the leader's backend with `pg_terminate_backend`: B leads within 2 s. Locally it took
+    3 ms, then A logged `leadership-lost`.
+  - B then publishes 200 more events, and order holds across the handover.
+  - When B steps down, A leads again.
+  - With the lock, RateLimiterIT's context could run its own relay again (#51), but it stays
+    disabled there: one relay per test JVM is simpler.
 
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried
   on the very next poll (every 200ms) with `attempts` only counting up.
-- **The relay's claim lock ends before it publishes.** The `FOR UPDATE SKIP LOCKED` claim runs in
-  its own transaction and commits before the sends, so two relay instances could claim the same
-  rows: duplicates (deduped by consumers) and per-aggregate reordering. Safe with today's single
-  instance per deployment; not with several.
-  #51 is this race, seen in CI when two test contexts each ran a relay.
 ## Scenario notes
 - **C2:** RANDOM provider plus flapping `reset_peer` toxics (upstream, timeout 0: request lost;
   downstream, timeout 50ms against a 150ms provider: provider paid, response lost). The first

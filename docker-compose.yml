@@ -149,6 +149,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PAYOUT_PROVIDER_URL: http://mock-payout-provider:9090
+      # Razorpay test mode (docs/razorpay-local.md). All unset: the in-memory fake gateway. Key id or
+      # key secret set: all three are required, or escrow-service refuses to start naming the missing ones.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
       # chaos/kill_mid_saga.py sets SPRING_PROFILES_ACTIVE=chaos and CHAOS_CRASH_POINT (K1).
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
       CHAOS_CRASH_POINT: ${CHAOS_CRASH_POINT:-NONE}

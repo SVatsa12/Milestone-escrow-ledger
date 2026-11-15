@@ -1,5 +1,7 @@
 package com.svatsa.escrow.deposits;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,8 +21,21 @@ import java.util.concurrent.ConcurrentHashMap;
 @org.springframework.boot.autoconfigure.condition.ConditionalOnExpression("'${razorpay.key-id:}'.isBlank()")
 public class FakeRazorpayGateway implements RazorpayGateway {
 
+    private static final Logger log = LoggerFactory.getLogger(FakeRazorpayGateway.class);
+
     private final Map<String, FakeOrder> orders = new ConcurrentHashMap<>();
     private final Map<String, FakePayment> payments = new ConcurrentHashMap<>();
+
+    public FakeRazorpayGateway(RazorpayConfig config) {
+        // Selected because RAZORPAY_KEY_ID is blank. A key secret without it is a half-configured
+        // test mode: fail rather than quietly take money-shaped requests with a fake.
+        if (config.wantsRealGateway()) {
+            config.requireCompleteForRealGateway();
+        }
+        log.warn("razorpay.gateway=FAKE: RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not set, so orders and payments "
+            + "are simulated in memory and nothing reaches Razorpay (webhook secret {})",
+            RazorpayConfig.missing(config.webhookSecret()) ? "not set: webhooks are rejected" : "set");
+    }
 
     /**
      * Create a fake order.

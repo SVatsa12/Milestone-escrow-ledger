@@ -647,6 +647,28 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   `KafkaConsumerConfig` from depending on `KafkaOperations` or a Kafka `Producer`. The test also
   shows the rule rejects a class that sends directly.
 
+### 49. docker compose couldn't run Razorpay test mode, and a half-set config failed obscurely
+- **Found by:** the README audit. The compose service never passed `RAZORPAY_*` to escrow-service,
+  so a compose run always used the fake gateway, whatever keys were exported. Running from source,
+  a key id without its secret failed inside the SDK gateway with a message naming only the secret.
+  A key secret without the id silently chose the fake.
+- **Fix:**
+  - Compose passes `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET`, with
+    empty defaults.
+  - `RazorpayConfig` decides the mode. With neither API key set, the fake gateway is used and it
+    logs `razorpay.gateway=FAKE ... nothing reaches Razorpay`. A webhook secret alone is allowed:
+    signed webhooks against the fake are how the tests and local webhook runs work.
+  - With either key set, all three are required. Startup fails with "Razorpay is partly
+    configured: X, Y are not set" (unresolved `${...}` placeholders count as unset). Otherwise the
+    SDK gateway logs `razorpay.gateway=RAZORPAY_SDK` with a masked key id.
+- **Regression:** `RazorpayGatewayWiringTest`:
+  - all blank → fake, with the log line;
+  - all set (default profile) → SDK, with the key masked in the log;
+  - webhook secret only → fake;
+  - key id only, key secret + webhook secret, and both keys without the webhook secret → each
+    fails naming exactly what is missing;
+  - the prod cases are unchanged.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

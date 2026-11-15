@@ -43,19 +43,22 @@ public class RazorpaySdkGateway implements RazorpayGateway {
 
     @Autowired
     public RazorpaySdkGateway(RazorpayConfig config) throws RazorpayException {
-        this(new RazorpayClient(required(config.keyId(), "razorpay.key-id (RAZORPAY_KEY_ID)"),
-            required(config.keySecret(), "razorpay.key-secret (RAZORPAY_KEY_SECRET)")));
+        // All three settings, or refuse to start. application-prod.yml has no defaults and Spring
+        // resolves placeholders leniently here, so an unset key arrives as "${RAZORPAY_KEY_ID}".
+        this(newClient(config));
+        log.info("razorpay.gateway=RAZORPAY_SDK mode=test keyId={}", maskKey(config.keyId()));
     }
 
-    /**
-     * application-prod.yml has no defaults for the keys, but Spring resolves placeholders leniently
-     * here and would hand over the literal "${RAZORPAY_KEY_ID}" as the key. Refuse to start instead.
-     */
-    private static String required(String value, String name) {
-        if (value == null || value.isBlank() || value.startsWith("${")) {
-            throw new IllegalStateException(name + " is not set; refusing to start the Razorpay gateway");
-        }
-        return value;
+    private static RazorpayClient newClient(RazorpayConfig config) throws RazorpayException {
+        config.requireCompleteForRealGateway();
+        return new RazorpayClient(config.keyId(), config.keySecret());
+    }
+
+    /** "rzp_test_ABCDEFGH1234" -> "rzp_test_****1234": enough to tell keys apart in logs. */
+    private static String maskKey(String keyId) {
+        int keep = Math.min(4, keyId.length());
+        int prefix = keyId.startsWith("rzp_test_") ? 9 : keyId.startsWith("rzp_live_") ? 9 : 0;
+        return keyId.substring(0, Math.min(prefix, keyId.length() - keep)) + "****" + keyId.substring(keyId.length() - keep);
     }
 
     private RazorpaySdkGateway(RazorpayClient client) {

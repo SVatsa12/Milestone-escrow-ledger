@@ -368,7 +368,7 @@ docker compose --profile app up -d --build             # + escrow-service (:8080
 | `VIRTUAL_THREADS` | `true` | virtual threads for request handling (compose) |
 | `ESCROW_DB` | `escrow` | database name (compose; benchmarks use a fresh one per run) |
 | `PAYOUT_PROVIDER_URL` | `http://localhost:9090` | payout provider base URL |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | empty | Razorpay test mode. With no key id the fake gateway is used. Read from the environment when you run from source; the compose service doesn't pass them through |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | empty | Razorpay test mode, from source or compose. With neither key set, the in-memory fake gateway is used (the startup log says `razorpay.gateway=FAKE`). With either key set, all three are required, otherwise startup fails naming the missing ones |
 | `SPRING_PROFILES_ACTIVE`, `CHAOS_CRASH_POINT` | empty, `NONE` | chaos K1 only |
 
 **Bootstrap admin.** A fresh database has one user, seeded by Flyway `V11`: id **1**,

@@ -541,6 +541,28 @@ commit, in two different tests. Neither was a production race.
   OutboxBatchPublisherTest 30/30 plain and 30/30 with 2 processors; the full suite green alongside a
   loop. Before: CI 1 pass in 3 attempts of the same commit; locally 8/8 (the boundary case is rare).
 
+### 45. Kafka consumers on virtual threads froze the whole app after a kill -9 (found by chaos K2)
+- **Symptom:** in K2, after the first `docker kill -s KILL`, the restarted app logged
+  "Consumer thread failed to start" twice (30 s apart), then "Started EscrowServiceApplication in
+  66 s", and then never answered `/actuator/health` (connections hung). Outbox and payouts froze.
+- **Evidence:** a SIGQUIT thread dump showed the JVM's only two carrier threads,
+  `ForkJoinPool-1-worker-1/2`, each "Carrying virtual thread" for the whole 586 s uptime with
+  49–79 ms of CPU: blocked, not busy. Re-running with `-Djdk.tracePinnedThreads=full` printed the
+  pinned stack: `KafkaMessageListenerContainer$ListenerConsumer.run` → `KafkaConsumer.poll` →
+  `AbstractCoordinator$JoinGroupResponseHandler.handle <== monitors:1`.
+- **Root cause:** with `spring.threads.virtual.enabled=true`, Boot runs Kafka listener containers
+  on virtual threads. The Kafka client blocks inside `synchronized` code during a consumer-group
+  rejoin, which pins the virtual thread to its carrier. escrow-service runs with `cpus: 2`, so it
+  has 2 carriers, and it has 2 consumers (audit, notifications). After a kill -9 the rejoin waits
+  for the dead members' session timeout, both carriers stay pinned, and no other virtual thread
+  (Tomcat's request handling, schedulers, the consumers' own start) can run at all.
+- **Fix:** a `ContainerCustomizer` gives the listener containers a platform-thread executor
+  (`kafka-consumer-*`). HTTP and everything else keep virtual threads.
+- **Regression:** `consumers/KafkaConsumerThreadsIT` requires every consumer loop to be a
+  platform thread named `kafka-consumer-*` with virtual threads on; it fails on the old
+  configuration (no platform consumer loop exists). K2 then passed: 4 kills, 3,513 acknowledged
+  operations each with exactly one journal entry.
+
 ## Open issues (not fixed yet)
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but

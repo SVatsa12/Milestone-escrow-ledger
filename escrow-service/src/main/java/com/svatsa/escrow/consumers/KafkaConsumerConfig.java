@@ -62,6 +62,27 @@ public class KafkaConsumerConfig {
     }
 
     /**
+     * Kafka consumers run on PLATFORM threads, even though the app enables virtual threads.
+     *
+     * With {@code spring.threads.virtual.enabled=true} Boot gives each listener container a
+     * virtual-thread executor. The Kafka client blocks inside {@code synchronized} code (e.g.
+     * {@code AbstractCoordinator$JoinGroupResponseHandler.handle} during a group rejoin), which
+     * pins the virtual thread to its carrier. A 2-CPU container has 2 carriers and this app has 2
+     * consumers: after a kill -9 the rejoin waits out the dead members' session timeout, both
+     * carriers stay pinned, and nothing else (Tomcat, schedulers, the consumers' own start) can run.
+     * The app logged "Started" and then never answered /actuator/health (chaos K2, FINDINGS #45).
+     * Two long-lived platform threads cost nothing; HTTP keeps its virtual threads.
+     */
+    @Bean
+    public org.springframework.kafka.config.ContainerCustomizer<Object, Object,
+            org.springframework.kafka.listener.ConcurrentMessageListenerContainer<Object, Object>> platformThreadConsumers() {
+        org.springframework.core.task.SimpleAsyncTaskExecutor platform =
+            new org.springframework.core.task.SimpleAsyncTaskExecutor("kafka-consumer-");
+        platform.setVirtualThreads(false);
+        return container -> container.getContainerProperties().setListenerTaskExecutor(platform);
+    }
+
+    /**
      * Make sure the dead-letter topics exist (kafka-init creates them in docker compose; tests and
      * other environments may not run it). KafkaAdmin leaves existing topics alone.
      */

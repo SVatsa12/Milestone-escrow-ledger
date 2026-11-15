@@ -511,6 +511,36 @@ These were listed as open issues below; each is now closed with its own tests.
   published rows are exactly each aggregate's acked prefix), `OutboxProducerConfigIT` (effective
   `ProducerConfig`: idempotence on, acks=all, in-flight <= 5), `OutboxRelayThroughputIT` unchanged.
 
+### 43. CI failed on c7fda31: two nondeterministic tests (both test bugs)
+CI run 43627635569 (commit c7fda31) failed, passed and failed again on three attempts of the same
+commit, in two different tests. Neither was a production race.
+- **`RateLimiterIT.payoutsHaveTheStricterLimit`** (attempt 1): `Status expected:<429> but was:<422>`.
+  MockMvc's printout of the six payout responses showed `X-RateLimit-Remaining` 4, 4, 3, 2, 1, 0: the
+  test ran from 18:38:59.65 to 18:39:00.5 and straddled a boundary of the limiter's fixed 60 s window
+  (keyed on the injected clock), so request 1 counted in one window and requests 2..6 in the next,
+  and the 6th got through. Every limit test in the class assumed N+1 real-time requests fall in one
+  window. **Fix:** `MutableClock.freezeAt(...)`; RateLimiterIT freezes the clock mid-window before
+  each test (only `advance()` moves it), and `aBurstAcrossAWindowBoundaryIsCountedInTwoWindows`
+  pins the fixed-window behaviour deliberately.
+- **`OutboxBatchPublisherTest.asyncFailureHoldsBackTheRestOfThatAggregate`** (attempt 3): the
+  later row x3 was never sent. `KafkaTemplate.doSend` checks `isDone()` on the producer's future
+  right after `send()` and rethrows a failure it can already see, synchronously. The test's mock
+  "async" failure returned a future completed on the common pool, so whether x2 failed
+  asynchronously or synchronously depended on which thread won; when it looked synchronous the
+  publisher correctly stopped the aggregate. **Fix:** the mock reports async failures only through
+  the callback from its own thread and returns a future that never completes;
+  `alreadyFailedFutureIsASynchronousFailure` covers the other case deterministically. The relay's
+  behaviour is right in both cases.
+- **Infrastructure, found while looping locally:** one of 30 CPU-limited RateLimiterIT runs errored
+  in every test because `apache/kafka:latest` exited with code 126 before logging "RECOVERY to
+  RUNNING", which failed AbstractIntegrationTest's static initializer. **Hardened:** every shared
+  container (Postgres, Toxiproxy, Kafka, Redis) now has 3 startup attempts and a 3-minute startup
+  timeout. Only the container start is retried, never an assertion.
+- **Evidence (after the fixes):** RateLimiterIT 30/30 in fresh JVMs with `-XX:ActiveProcessorCount=2` and 30/30
+  plain, the two loops running side by side on one Docker host, with 0 container start failures;
+  OutboxBatchPublisherTest 30/30 plain and 30/30 with 2 processors; the full suite green alongside a
+  loop. Before: CI 1 pass in 3 attempts of the same commit; locally 8/8 (the boundary case is rare).
+
 ## Open issues (not fixed yet)
 - **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but

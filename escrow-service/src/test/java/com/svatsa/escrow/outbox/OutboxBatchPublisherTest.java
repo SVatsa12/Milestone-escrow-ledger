@@ -40,6 +40,7 @@ class OutboxBatchPublisherTest {
         final Set<String> failAsync = new HashSet<>();
         final Set<String> failSync = new HashSet<>();
         final Set<String> neverAck = new HashSet<>();
+        final Set<String> failedBeforeReturn = new HashSet<>();
         final List<String> attempted = new ArrayList<>();   // every record that reached send(), in order
 
         SelectiveProducer() {
@@ -55,9 +56,19 @@ class OutboxBatchPublisherTest {
             attempted.add(id);
             if (failAsync.contains(id)) {
                 var error = new org.apache.kafka.common.errors.TimeoutException("broker timed out on " + id + " (test)");
-                // Like the real producer: the failure is reported later, from another (I/O) thread.
-                return CompletableFuture.runAsync(() -> callback.onCompletion(null, error))
-                    .thenCompose(v -> CompletableFuture.<RecordMetadata>failedFuture(error));
+                // Like the real producer: the failure is reported later, through the callback, from
+                // another (I/O) thread. The future returned here must NOT be done when send() returns:
+                // KafkaTemplate.doSend checks isDone() right after send() and, if it already failed,
+                // throws synchronously. This used to return a future completed on the common pool, so
+                // whether the failure looked async or sync depended on which thread won (flaky in CI).
+                Thread.ofPlatform().start(() -> callback.onCompletion(null, error));
+                return new CompletableFuture<>();   // never completes; only the callback reports
+            }
+            if (failedBeforeReturn.contains(id)) {
+                // The producer already knows the send failed when send() returns (e.g. buffer full).
+                var error = new org.apache.kafka.common.errors.RecordTooLargeException(id + " too large (test)");
+                callback.onCompletion(null, error);
+                return CompletableFuture.failedFuture(error);
             }
             if (neverAck.contains(id)) {
                 return new CompletableFuture<>();   // the callback never fires
@@ -136,6 +147,21 @@ class OutboxBatchPublisherTest {
         assertThat(result.failed()).containsOnlyKeys(x2);
         assertThat(result.heldBack()).containsExactly(x3, x4);
         assertThat(producer.attempted).doesNotContain(id(x3), id(x4));
+    }
+
+    @Test
+    @DisplayName("a send whose future has already failed when send() returns counts as synchronous: later rows are not sent")
+    void alreadyFailedFutureIsASynchronousFailure() {
+        OutboxRow x1 = row("X"), x2 = row("X"), y1 = row("Y"), x3 = row("X");
+        producer.failedBeforeReturn.add(id(x2));
+
+        var result = publish(List.of(x1, x2, y1, x3));
+
+        // KafkaTemplate rethrows a failure it can already see, so the publisher stops X right there.
+        assertThat(result.published()).containsExactly(x1, y1);
+        assertThat(result.failed()).containsOnlyKeys(x2);
+        assertThat(result.heldBack()).containsExactly(x3);
+        assertThat(producer.attempted).doesNotContain(id(x3));
     }
 
     @Test

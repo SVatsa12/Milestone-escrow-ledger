@@ -73,6 +73,14 @@ public abstract class AbstractIntegrationTest {
     private static final int PG_PROXY_PORT = 8666;
     private static final int PROVIDER_PROXY_PORT = 8667;
 
+    /**
+     * Starting the containers is retried (never a test assertion). A loaded Docker host has failed
+     * a start outright: apache/kafka exited with code 126 before logging "RECOVERY to RUNNING", which
+     * errored every test of the class (chaos/FINDINGS.md #43).
+     */
+    private static final int STARTUP_ATTEMPTS = 3;
+    private static final java.time.Duration STARTUP_TIMEOUT = java.time.Duration.ofMinutes(3);
+
     private static final Network NETWORK = Network.newNetwork();
 
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16")
@@ -83,14 +91,22 @@ public abstract class AbstractIntegrationTest {
         .withPassword("escrow")
         // Every cached Spring test context keeps a 30-connection Hikari pool open (min idle = max),
         // and the in-process payout provider has its own: the default 100 ran out.
-        .withCommand("postgres", "-c", "max_connections=300");
+        .withCommand("postgres", "-c", "max_connections=300")
+        .withStartupAttempts(STARTUP_ATTEMPTS)
+        .withStartupTimeout(STARTUP_TIMEOUT);
 
     private static final ToxiproxyContainer TOXIPROXY = new ToxiproxyContainer("ghcr.io/shopify/toxiproxy:2.5.0")
-        .withNetwork(NETWORK);
+        .withNetwork(NETWORK)
+        .withStartupAttempts(STARTUP_ATTEMPTS)
+        .withStartupTimeout(STARTUP_TIMEOUT);
 
-    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:latest");
+    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:latest")
+        .withStartupAttempts(STARTUP_ATTEMPTS)
+        .withStartupTimeout(STARTUP_TIMEOUT);
 
-    private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7").withExposedPorts(6379);
+    private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7").withExposedPorts(6379)
+        .withStartupAttempts(STARTUP_ATTEMPTS)
+        .withStartupTimeout(STARTUP_TIMEOUT);
 
     /**
      * One clock for every test context and the in-process provider: moving time in a test moves it

@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -53,6 +54,12 @@ class RateLimiterIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        // The limiter counts in fixed 60 s windows of the injected clock. On real time a test could
+        // straddle a window boundary and split its requests over two windows: CI once saw payout
+        // request 1 at 18:38:59.65 and 2..6 after 18:39:00 (X-RateLimit-Remaining 4,4,3,2,1,0), so
+        // the 6th request got through. Freeze the clock mid-window; only advance() moves it.
+        long now = clock.instant().getEpochSecond();
+        clock.freezeAt(Instant.ofEpochSecond((now / 60) * 60 + 30));
         String run = UUID.randomUUID().toString().substring(0, 8);
         // A fresh ADMIN per test (own rate-limit window); actor ids must be real users now.
         actor = String.valueOf(newAdmin().id());
@@ -103,11 +110,26 @@ class RateLimiterIT extends AbstractIntegrationTest {
         // Freelancer wallets start empty, so these are 422 INSUFFICIENT_FUNDS: what matters here
         // is that requests 1..5 get past the limiter and request 6 does not.
         // A real freelancer: the users trigger creates their (empty) wallet.
-        String freelancer = String.valueOf(jdbcClient.sql(
-                "INSERT INTO users (name, role) VALUES ('rl-freelancer', 'FREELANCER') RETURNING id")
-            .query(Long.class).single());
+        String freelancer = newFreelancer();
         for (int i = 0; i < PAYOUT_LIMIT; i++) {
             payout(freelancer).andExpect(status().isUnprocessableEntity());
+        }
+        payout(freelancer).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    @DisplayName("fixed windows: a burst that straddles a window boundary is counted in two windows")
+    void aBurstAcrossAWindowBoundaryIsCountedInTwoWindows() throws Exception {
+        // What the old tests ran into by accident on real time, pinned down on a frozen clock.
+        long now = clock.instant().getEpochSecond();
+        clock.freezeAt(Instant.ofEpochSecond((now / 60) * 60 + 59));   // last second of a window
+        String freelancer = newFreelancer();
+        payout(freelancer).andExpect(status().isUnprocessableEntity())
+            .andExpect(header().string("X-RateLimit-Remaining", "4"));
+        clock.advance(Duration.ofSeconds(1));                             // next window
+        for (int i = PAYOUT_LIMIT - 1; i >= 0; i--) {
+            payout(freelancer).andExpect(status().isUnprocessableEntity())
+                .andExpect(header().string("X-RateLimit-Remaining", String.valueOf(i)));
         }
         payout(freelancer).andExpect(status().isTooManyRequests());
     }
@@ -162,6 +184,13 @@ class RateLimiterIT extends AbstractIntegrationTest {
             .header("Idempotency-Key", UUID.randomUUID().toString())
             .contentType(MediaType.APPLICATION_JSON)
             .content(transferBody()));
+    }
+
+    /** A real freelancer: the users trigger creates their (empty) wallet. */
+    private String newFreelancer() {
+        return String.valueOf(jdbcClient.sql(
+                "INSERT INTO users (name, role) VALUES ('rl-freelancer', 'FREELANCER') RETURNING id")
+            .query(Long.class).single());
     }
 
     private ResultActions payout(String actorId) throws Exception {

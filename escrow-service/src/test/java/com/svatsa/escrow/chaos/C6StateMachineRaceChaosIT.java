@@ -95,6 +95,7 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
         // The boundary: the last submission's review window ends exactly now.
         Instant lastSubmitted = jdbcClient.sql("SELECT max(submitted_at) FROM milestones WHERE id = ANY(?)")
             .param(milestones.toArray(new Long[0])).query(java.time.OffsetDateTime.class).single().toInstant();
+        awaitOutboxDrained(); // the jump is longer than I9's 5 minutes
         clock.set(lastSubmitted.plus(REVIEW_WINDOW));
         scenarioDay = LocalDate.ofInstant(clock.instant(), IST);
 

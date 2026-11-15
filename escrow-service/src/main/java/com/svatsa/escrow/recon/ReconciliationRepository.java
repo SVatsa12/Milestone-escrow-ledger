@@ -4,6 +4,7 @@ import com.svatsa.escrow.common.SqlTime;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -17,9 +18,11 @@ import java.util.UUID;
 public class ReconciliationRepository {
 
     private final JdbcClient jdbcClient;
+    private final Clock clock;
 
-    public ReconciliationRepository(JdbcClient jdbcClient) {
+    public ReconciliationRepository(JdbcClient jdbcClient, Clock clock) {
         this.jdbcClient = jdbcClient;
+        this.clock = clock;
     }
 
     /**
@@ -34,7 +37,7 @@ public class ReconciliationRepository {
         }
 
         UUID id = UUID.randomUUID();
-        Instant now = Instant.now();
+        Instant now = clock.instant();
 
         jdbcClient.sql("""
             INSERT INTO recon_runs (id, run_date, entity_type, started_at, status)
@@ -131,7 +134,7 @@ public class ReconciliationRepository {
             SET completed_at = ?, status = ?, mismatch_count = ?, notes = ?
             WHERE id = ?
             """)
-            .param(1, SqlTime.ts(Instant.now()))
+            .param(1, SqlTime.ts(clock.instant()))
             .param(2, "COMPLETED")
             .param(3, mismatchCount)
             .param(4, notes)
@@ -148,7 +151,7 @@ public class ReconciliationRepository {
             SET completed_at = ?, status = ?, notes = ?
             WHERE id = ?
             """)
-            .param(1, SqlTime.ts(Instant.now()))
+            .param(1, SqlTime.ts(clock.instant()))
             .param(2, "FAILED")
             .param(3, reason)
             .param(4, runId)

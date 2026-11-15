@@ -12,7 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URI;
-import java.time.Instant;
+import java.time.Clock;
 
 /**
  * HandlerInterceptor for rate limiting money-moving endpoints.
@@ -44,13 +44,16 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     private final MeterRegistry meterRegistry;
 
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final Clock clock;
 
     public RateLimitInterceptor(
         RedisRateLimiter rateLimiter,
         RateLimitConfig config,
         MeterRegistry meterRegistry,
-        com.fasterxml.jackson.databind.ObjectMapper objectMapper
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+        Clock clock
     ) {
+        this.clock = clock;
         this.rateLimiter = rateLimiter;
         this.config = config;
         this.meterRegistry = meterRegistry;
@@ -120,7 +123,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             // Return 429 Too Many Requests
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setContentType("application/problem+json");
-            response.addHeader("Retry-After", String.valueOf(result.resetTime - Instant.now().getEpochSecond()));
+            // The window is keyed on the injected Clock (RedisRateLimiter), so Retry-After must be too.
+            response.addHeader("Retry-After", String.valueOf(Math.max(0, result.resetTime - clock.instant().getEpochSecond())));
 
             // ProblemDetail response
             ProblemDetail detail = ProblemDetail.forStatusAndDetail(

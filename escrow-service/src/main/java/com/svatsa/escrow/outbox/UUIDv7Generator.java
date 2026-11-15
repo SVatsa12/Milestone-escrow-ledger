@@ -22,16 +22,8 @@ public class UUIDv7Generator {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
-     * Generates a new UUIDv7 at the current time.
-     */
-    public static UUID generate() {
-        long now = System.currentTimeMillis();
-        return generateAtTime(now);
-    }
-
-    /**
-     * Generates a UUIDv7 at a specific millisecond timestamp.
-     * (Useful for testing time travel.)
+     * Generates a UUIDv7 at a millisecond timestamp. Callers pass {@code clock.millis()} from the
+     * injected Clock, so event ids order with the clock tests move (no system-time overload).
      */
     public static UUID generateAtTime(long timestampMs) {
         // 48-bit timestamp in milliseconds

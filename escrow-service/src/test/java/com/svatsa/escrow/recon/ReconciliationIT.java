@@ -113,6 +113,7 @@ class ReconciliationIT extends AbstractIntegrationTest {
     /** A day nobody else uses, with the clock at 11:30 IST on it. */
     private LocalDate reconDay() {
         LocalDate day = LocalDate.of(2031, 1, 1).plusDays(4L * DAYS.getAndIncrement());
+        awaitOutboxDrained(); // a years-long jump would make rows awaiting the relay look stale (I9)
         clock.set(istTime(day, 11, 30, 0));
         razorpay.reset();
         return day;

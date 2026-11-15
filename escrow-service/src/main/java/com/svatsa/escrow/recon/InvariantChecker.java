@@ -2,6 +2,9 @@ package com.svatsa.escrow.recon;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import com.svatsa.escrow.common.SqlTime;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,9 +54,11 @@ import java.util.List;
 public class InvariantChecker {
 
     private final JdbcClient jdbcClient;
+    private final Clock clock;
 
-    public InvariantChecker(JdbcClient jdbcClient) {
+    public InvariantChecker(JdbcClient jdbcClient, Clock clock) {
         this.jdbcClient = jdbcClient;
+        this.clock = clock;
     }
 
     /**
@@ -367,6 +372,8 @@ public class InvariantChecker {
     /**
      * I9: Every outbox row older than 5 minutes is published.
      * (Warning level, not a money violation, but indicates relay issues)
+     * "Older" is measured on the injected Clock, the same clock OutboxWriter stamps created_at with
+     * (it used to compare DB now() with a created_at taken from system time).
      */
     private List<Violation> checkI9() {
         List<Violation> violations = new ArrayList<>();
@@ -375,8 +382,9 @@ public class InvariantChecker {
             SELECT COUNT(*)
             FROM outbox
             WHERE published_at IS NULL
-            AND created_at < now() - INTERVAL '5 minutes'
+            AND created_at < ?
             """)
+            .param(SqlTime.ts(clock.instant().minus(Duration.ofMinutes(5))))
             .query(Long.class)
             .single();
 

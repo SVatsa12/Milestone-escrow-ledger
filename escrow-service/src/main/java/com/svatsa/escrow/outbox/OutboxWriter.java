@@ -2,6 +2,9 @@ package com.svatsa.escrow.outbox;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.svatsa.escrow.common.SqlTime;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -28,10 +31,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class OutboxWriter {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    public OutboxWriter(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+    public OutboxWriter(JdbcClient jdbcClient, ObjectMapper objectMapper, Clock clock) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     /**
@@ -72,16 +77,18 @@ public class OutboxWriter {
             throw new IllegalArgumentException("payload cannot be null");
         }
 
-        UUID eventId = UUIDv7Generator.generate();
+        // created_at and the UUIDv7 timestamp both come from the injected Clock: I9 measures
+        // staleness on that clock, so a test that moves time moves the outbox with it.
+        Instant now = clock.instant();
+        UUID eventId = UUIDv7Generator.generateAtTime(now.toEpochMilli());
         JsonNode payloadJson = objectMapper.valueToTree(payload);
-        long now = System.currentTimeMillis();
 
         try {
             String payloadJsonStr = objectMapper.writeValueAsString(payloadJson);
             
             jdbcClient.sql("""
                 INSERT INTO outbox (event_id, aggregate_type, aggregate_id, event_type, topic, payload, created_at)
-                VALUES (?, ?, ?, ?, ?, ?::jsonb, to_timestamp(? / 1000.0))
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?)
                 """)
                 .param(eventId)
                 .param(aggregateType)
@@ -89,7 +96,7 @@ public class OutboxWriter {
                 .param(eventType)
                 .param(topic)
                 .param(payloadJsonStr)
-                .param(now)
+                .param(SqlTime.ts(now))
                 .update();
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new IllegalArgumentException("Failed to serialize payload to JSON", e);

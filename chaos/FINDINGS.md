@@ -592,8 +592,38 @@ C2 and C3 were real, and no scenario reconciled.
   configuration (no platform consumer loop exists). K2 then passed: 4 kills, 3,513 acknowledged
   operations each with exactly one journal entry.
 
+## Final audit (P16)
+The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed below.
+
+### 46. Five classes read the system clock instead of the injected Clock
+- **Found by:** grepping for `Instant.now()`, `LocalDate.now()` and `System.currentTimeMillis()`.
+- **Where:**
+  - `ReconciliationRepository`: a run's `started_at` and `completed_at`.
+  - `AdminController`: `GET /admin/recon/runs` without a date used `LocalDate.now()` in the
+    server's zone. Between 00:00 and 05:30 IST, a UTC server returned the previous day's runs.
+  - `ReconciliationScheduler`: "yesterday".
+  - `RateLimitInterceptor`: `Retry-After`. Its window is keyed on the Clock, so frozen-clock tests
+    got nonsense values.
+  - `OutboxWriter` and `UUIDv7Generator`: `created_at` and the event id's timestamp. I9 compared
+    that system-time `created_at` with the database's `now()`, so no test could move an outbox
+    row's age.
+- **Fix:** all of them take the Clock. IST dates use `LocalDate.ofInstant(clock.instant(), IST)`,
+  which doesn't depend on the clock's zone. I9 now measures age on the Clock too, the same clock
+  that stamps `created_at`. `UUIDv7Generator` lost its system-time overload.
+- **Consequence for tests:** jumping the test clock forward (to a reconciliation day in 2031 or a
+  chaos day in 2041) made rows still waiting for the relay's next 200 ms poll look years old.
+  `ReconciliationIT` caught it on the first run. Tests now call `awaitOutboxDrained()` before such
+  a jump: `ReconciliationIT`, `AbstractChaosIT` and C6.
+- **Regression:**
+  - `AdminReconDateIT`: at 02:00 IST (20:30 UTC the day before), the default date is the IST date.
+  - `OutboxStalenessIT`: a held, unpublished row has `created_at` equal to the Clock. It is not
+    stale after 4 minutes, and I9 reports it after 6.
+  - `ArchitectureRulesTest`: an ArchUnit rule forbids `now()` on
+    Instant/LocalDate/LocalDateTime/LocalTime/ZonedDateTime/OffsetDateTime, `System.currentTimeMillis()`
+    and `Clock.system*()` anywhere in `main` except `ClockConfig`. `X.now(clock)` is allowed, and
+    the test also proves the rule catches each forbidden call.
+
 ## Open issues (not fixed yet)
-- **`RateLimitInterceptor` builds `Retry-After` from `Instant.now()`**, not the injected Clock.
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried
   on the very next poll (every 200ms) with `attempts` only counting up.

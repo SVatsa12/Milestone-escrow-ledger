@@ -36,6 +36,7 @@ public abstract class AbstractChaosIT extends AbstractToxiproxyIT {
     @BeforeEach
     void ownDay() {
         scenarioDay = LocalDate.of(2041, 1, 1).plusDays(4L * DAYS.getAndIncrement());
+        awaitOutboxDrained(); // a years-long jump would make rows awaiting the relay look stale (I9)
         clock.set(scenarioDay.atTime(6, 0).atZone(IST).toInstant());
     }
 

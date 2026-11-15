@@ -229,6 +229,18 @@ public abstract class AbstractIntegrationTest {
         KAFKA.getDockerClient().unpauseContainerCmd(KAFKA.getContainerId()).exec();
     }
 
+    /**
+     * Wait until the relay has published every outbox row. Call it before jumping the clock forward
+     * by more than I9's 5 minutes: OutboxWriter stamps created_at from the clock and I9 measures age
+     * on it, so a row still waiting for the relay's next poll would look stale after the jump.
+     */
+    protected void awaitOutboxDrained() {
+        org.awaitility.Awaitility.await("outbox drained before moving the clock")
+            .atMost(java.time.Duration.ofSeconds(30)).pollInterval(java.time.Duration.ofMillis(50))
+            .until(() -> jdbcClient.sql("SELECT count(*) FROM outbox WHERE published_at IS NULL")
+                .query(Long.class).single() == 0);
+    }
+
     protected static void removeAllToxics(Proxy proxy) throws IOException {
         for (Toxic toxic : proxy.toxics().getAll()) {
             toxic.remove();

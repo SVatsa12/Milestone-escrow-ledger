@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -31,17 +32,20 @@ public class AdminController {
     private final ReconciliationRepository reconRepo;
     private final ReconciliationScheduler reconScheduler;
     private final InvariantChecker invariantChecker;
+    private final Clock clock;
 
     public AdminController(
         ReconciliationService reconService,
         ReconciliationRepository reconRepo,
         ReconciliationScheduler reconScheduler,
-        InvariantChecker invariantChecker
+        InvariantChecker invariantChecker,
+        Clock clock
     ) {
         this.reconService = reconService;
         this.reconRepo = reconRepo;
         this.reconScheduler = reconScheduler;
         this.invariantChecker = invariantChecker;
+        this.clock = clock;
     }
 
     /**
@@ -94,7 +98,8 @@ public class AdminController {
 
     /**
      * GET /api/v1/admin/recon/runs?date=YYYY-MM-DD
-     * Get all reconciliation runs for a date.
+     * Get all reconciliation runs for a date. Without a date: today in Asia/Kolkata (the day
+     * reconciliation runs are keyed by), from the injected Clock, not the server's zone.
      */
     @GetMapping("/recon/runs")
     public ResponseEntity<?> getReconRuns(
@@ -103,7 +108,7 @@ public class AdminController {
     ) {
         Authz.requireAdmin(actor, "read reconciliation runs");
         try {
-            LocalDate queryDate = (date != null) ? date : LocalDate.now();
+            LocalDate queryDate = (date != null) ? date : LocalDate.ofInstant(clock.instant(), ReconciliationService.IST);
             List<ReconRun> runs = reconRepo.findRunsByDate(queryDate);
 
             Map<String, Object> response = new HashMap<>();

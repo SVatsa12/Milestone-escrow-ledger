@@ -86,7 +86,7 @@ public final class ApiClient {
     }
 
     public long createUser(String name, String role) throws Exception {
-        return expect(post("/api/escrow/users", null, admin(), "{\"name\":\"" + name + "\",\"role\":\"" + role + "\"}"), 201)
+        return expect(post("/api/v1/users", null, admin(), "{\"name\":\"" + name + "\",\"role\":\"" + role + "\"}"), 201)
             .path("id").asLong();
     }
 

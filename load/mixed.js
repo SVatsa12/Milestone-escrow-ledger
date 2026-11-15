@@ -47,7 +47,7 @@ export default function (data) {
 
 function read(data) {
   if (Math.random() < 0.5) {
-    http.get(`${BASE}/api/escrow/projects/${pick(data.projects).projectId}`, { tags: { name: 'get-project' } });
+    http.get(`${BASE}/api/v1/projects/${pick(data.projects).projectId}`, { tags: { name: 'get-project' } });
   } else {
     http.get(`${BASE}/api/v1/accounts/${pick(data.clients).walletId}`, { tags: { name: 'get-balance' } });
   }
@@ -72,7 +72,7 @@ function approve(data) {
   const p = pick(data.projects);
   const key = newKey('mx-ap');
   const milestoneId = pick(p.milestoneIds);
-  const res = http.post(`${BASE}/api/escrow/milestones/${milestoneId}/approve`, null,
+  const res = http.post(`${BASE}/api/v1/milestones/${milestoneId}/approve`, null,
     Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'approve' } }));
   ack('approve', key, res, milestoneId);
 }
@@ -81,7 +81,7 @@ function dispute(data) {
   const p = pick(data.projects);
   const key = newKey('mx-ds');
   const milestoneId = pick(p.milestoneIds);
-  const res = http.post(`${BASE}/api/escrow/disputes`,
+  const res = http.post(`${BASE}/api/v1/disputes`,
     JSON.stringify({ milestoneId, reason: 'k6' }),
     Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'dispute' } }));
   ack('dispute', key, res, milestoneId);

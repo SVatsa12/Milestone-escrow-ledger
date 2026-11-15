@@ -379,20 +379,20 @@ These were listed as open issues below; each is now closed with its own tests.
 
   | endpoint | allowed | AuthorizationIT |
   |---|---|---|
-  | `POST /api/escrow/projects` | the named CLIENT, or ADMIN | `createProject` |
-  | `POST /api/escrow/projects/{id}/fund` | the project's CLIENT | `fund` |
-  | `POST /api/escrow/milestones/{id}/submit` | the project's FREELANCER | `submit` |
-  | `POST /api/escrow/milestones/{id}/approve` | the project's CLIENT (SYSTEM internally) | `approve` |
-  | `POST /api/escrow/milestones/{id}/cancel` | the project's CLIENT | `cancel` |
-  | `POST /api/escrow/disputes` | the project's CLIENT or FREELANCER | `openDispute` |
-  | `POST /api/escrow/disputes/{id}/resolve` | ADMIN | `resolveDispute` |
+  | `POST /api/v1/projects` | the named CLIENT, or ADMIN | `createProject` |
+  | `POST /api/v1/projects/{id}/fund` | the project's CLIENT | `fund` |
+  | `POST /api/v1/milestones/{id}/submit` | the project's FREELANCER | `submit` |
+  | `POST /api/v1/milestones/{id}/approve` | the project's CLIENT (SYSTEM internally) | `approve` |
+  | `POST /api/v1/milestones/{id}/cancel` | the project's CLIENT | `cancel` |
+  | `POST /api/v1/disputes` | the project's CLIENT or FREELANCER | `openDispute` |
+  | `POST /api/v1/disputes/{id}/resolve` | ADMIN | `resolveDispute` |
   | `POST /api/v1/deposits` | that CLIENT | `deposit` |
   | `POST /api/v1/payouts` | that FREELANCER, own wallet | `payout`, `payoutOnlyFromOwnWallet` |
   | `POST /api/v1/transfers` | ADMIN | `transfer` |
   | `POST /api/v1/accounts` | ADMIN | `createAccount` |
   | `POST /api/v1/admin/deposits/simulate` | ADMIN | `adminEndpoints` |
   | `POST /api/v1/admin/recon/run` | ADMIN | `adminEndpoints` |
-  | `POST /api/escrow/users` | ADMIN (closed in #39) | `createUser` |
+  | `POST /api/v1/users` | ADMIN (closed in #39) | `createUser` |
   | `POST /webhooks/razorpay` | no actor: authenticated by the HMAC signature | `DepositWebhookIT` (bad signature is 400) |
 
   Since #39 every row with a role also requires that the actor id is a real user whose stored role
@@ -406,14 +406,14 @@ These were listed as open issues below; each is now closed with its own tests.
   accepted too. Shown before the fix: client user 1 claiming ADMIN and the unknown id 987654321
   claiming ADMIN both got `200` from `GET /api/v1/admin/invariants`. On a fresh database the first
   client got id 1, so the "admin id 1" that tests and k6 sent was really that client.
-  `POST /api/escrow/users` also had no actor check at all.
+  `POST /api/v1/users` also had no actor check at all.
 - **Fix:**
   - The resolver looks the id up in `users`: an unknown id, or a claimed role that isn't the stored
     one, is `401 UNAUTHENTICATED`. Found roles are cached; that is correct because `V11` makes a
     user's id and role immutable and forbids deleting users. Unknown ids are never cached.
   - `V11` seeds the bootstrap ADMIN, **id 1 `bootstrap-admin`** (README, AGENTS.md), moves the
     `users` id sequence past it, and refuses to run if id 1 already exists as a non-admin.
-  - `POST /api/escrow/users` is ADMIN-only (and an ADMIN may create other ADMINs).
+  - `POST /api/v1/users` is ADMIN-only (and an ADMIN may create other ADMINs).
   - `ApiClient.BOOTSTRAP_ADMIN_ID`, k6's `BOOTSTRAP_ADMIN_ID` and `run-bench.sh` use id 1;
     `RateLimiterIT` now uses real users instead of random actor ids.
 - **Regression:** `AuthorizationIT.createUser`, `spoofedRoleIs401` (CLIENT/FREELANCER ids claiming

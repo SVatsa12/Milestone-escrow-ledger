@@ -116,9 +116,9 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
             }
             List<Future<?>> calls = new ArrayList<>();
             for (long m : milestones) {
-                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/escrow/milestones/" + m + "/approve",
+                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/v1/milestones/" + m + "/approve",
                     "c6-appr-" + m, actor(client, "CLIENT"), "")));
-                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/escrow/disputes",
+                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/v1/disputes",
                     "c6-disp-" + m, actor(freelancer, "FREELANCER"), "{\"milestoneId\":" + m + ",\"reason\":\"c6\"}")));
             }
             go.countDown();

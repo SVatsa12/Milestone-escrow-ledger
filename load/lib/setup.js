@@ -29,7 +29,7 @@ export function setupData() {
   for (let i = 0; i < PROJECTS; i++) {
     specs.push({ client: clients[i % clients.length], freelancer: freelancers[i % freelancers.length] });
   }
-  const created = batch(specs.map((s, i) => ['POST', `${BASE}/api/escrow/projects`, JSON.stringify({
+  const created = batch(specs.map((s, i) => ['POST', `${BASE}/api/v1/projects`, JSON.stringify({
     clientId: s.client.userId,
     freelancerId: s.freelancer.userId,
     title: `load-${run}-${i}`,
@@ -38,11 +38,11 @@ export function setupData() {
   }), jsonHeaders(actor(s.client.userId, 'CLIENT'))]), 201, 'create project');
   const projectIds = created.map((r) => r.json('id'));
 
-  batch(projectIds.map((id, i) => ['POST', `${BASE}/api/escrow/projects/${id}/fund`, null,
+  batch(projectIds.map((id, i) => ['POST', `${BASE}/api/v1/projects/${id}/fund`, null,
     jsonHeaders(actor(specs[i].client.userId, 'CLIENT'), `setup-fund-${run}-${id}`)]),
     200, 'fund project');
 
-  const details = batch(projectIds.map((id) => ['GET', `${BASE}/api/escrow/projects/${id}`, null, {}]), 200, 'get project');
+  const details = batch(projectIds.map((id) => ['GET', `${BASE}/api/v1/projects/${id}`, null, {}]), 200, 'get project');
   const projects = details.map((r, i) => ({
     projectId: projectIds[i],
     clientId: specs[i].client.userId,
@@ -52,7 +52,7 @@ export function setupData() {
 
   const submits = [];
   projects.forEach((p) => p.milestoneIds.forEach((mid) => submits.push(['POST',
-    `${BASE}/api/escrow/milestones/${mid}/submit`, null,
+    `${BASE}/api/v1/milestones/${mid}/submit`, null,
     jsonHeaders(actor(p.freelancerId, 'FREELANCER'), `setup-sub-${run}-${mid}`)])));
   batch(submits, 200, 'submit milestone');
 
@@ -60,7 +60,7 @@ export function setupData() {
 }
 
 function createUsers(role, n, run) {
-  const users = batch(Array.from({ length: n }, (_, i) => ['POST', `${BASE}/api/escrow/users`,
+  const users = batch(Array.from({ length: n }, (_, i) => ['POST', `${BASE}/api/v1/users`,
     JSON.stringify({ name: `${role.toLowerCase()}-${run}-${i}`, role }), jsonHeaders(ADMIN)]), 201, `create ${role}`);
   const ids = users.map((r) => r.json('id'));
   const prefix = role === 'CLIENT' ? 'CLIENT_WALLET' : 'FREELANCER_WALLET';

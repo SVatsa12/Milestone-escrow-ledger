@@ -39,12 +39,12 @@ class ProjectApiIT extends AbstractToxiproxyIT {
         long freelancer = api.createUser("pf-" + run, "FREELANCER");
 
         // review_window (INTERVAL) used to be bound as varchar, so this was always a 500.
-        JsonNode created = api.expect(api.post("/api/escrow/projects", null, actor(client, "CLIENT"),
+        JsonNode created = api.expect(api.post("/api/v1/projects", null, actor(client, "CLIENT"),
             ApiClient.projectBody(client, freelancer, "p-" + run, 10_000, 20_000)), 201);
         long projectId = created.path("id").asLong();
 
         // ...and reading it back had no INTERVAL -> Duration converter.
-        JsonNode read = api.expect(api.get("/api/escrow/projects/" + projectId), 200);
+        JsonNode read = api.expect(api.get("/api/v1/projects/" + projectId), 200);
         assertThat(read.path("project").path("reviewWindow").asText()).isEqualTo("PT120H");
         assertThat(read.path("milestones").size()).isEqualTo(2);
     }
@@ -60,7 +60,7 @@ class ProjectApiIT extends AbstractToxiproxyIT {
         int n = 30;
         List<CompletableFuture<HttpResponse<String>>> calls = new ArrayList<>();
         for (int i = 0; i < n; i++) {
-            calls.add(api.http().sendAsync(api.postRequest("/api/escrow/projects", null, actor(client, "CLIENT"), body).build(),
+            calls.add(api.http().sendAsync(api.postRequest("/api/v1/projects", null, actor(client, "CLIENT"), body).build(),
                 HttpResponse.BodyHandlers.ofString()));
         }
         Set<Long> escrowAccounts = new HashSet<>();

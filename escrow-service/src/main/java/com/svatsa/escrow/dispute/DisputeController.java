@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
  * All money-moving endpoints require Idempotency-Key header.
  */
 @RestController
-@RequestMapping("/api/escrow/disputes")
+@RequestMapping("/api/v1/disputes")
 public class DisputeController {
 
     private final DisputeService disputeService;
@@ -29,7 +29,7 @@ public class DisputeController {
 
     /**
      * Opens a dispute on a milestone.
-     * POST /api/escrow/disputes
+     * POST /api/v1/disputes
      * Body: {milestoneId, reason}
      * Header: X-Actor-Id, X-Actor-Role, Idempotency-Key
      */
@@ -59,7 +59,7 @@ public class DisputeController {
 
     /**
      * Resolves a dispute (ADMIN only).
-     * POST /api/escrow/disputes/{id}/resolve
+     * POST /api/v1/disputes/{id}/resolve
      * Body: {freelancerSharePaise, clientSharePaise, resolutionNote}
      * Header: X-Actor-Id, X-Actor-Role, Idempotency-Key
      */
@@ -92,7 +92,7 @@ public class DisputeController {
 
     /**
      * Gets a dispute by ID.
-     * GET /api/escrow/disputes/{id}
+     * GET /api/v1/disputes/{id}
      */
     @GetMapping("/{id}")
     public ResponseEntity<Dispute> getDispute(@PathVariable Long id) {

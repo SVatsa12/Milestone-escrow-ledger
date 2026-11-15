@@ -62,7 +62,7 @@ A fresh database has exactly one user, seeded by Flyway `V11`:
 Only an ADMIN can create users, so start there:
 
 ```bash
-curl -X POST localhost:8080/api/escrow/users   -H 'X-Actor-Id: 1' -H 'X-Actor-Role: ADMIN' -H 'Content-Type: application/json'   -d '{"name":"alice","role":"CLIENT"}'
+curl -X POST localhost:8080/api/v1/users   -H 'X-Actor-Id: 1' -H 'X-Actor-Role: ADMIN' -H 'Content-Type: application/json'   -d '{"name":"alice","role":"CLIENT"}'
 ```
 
 If an existing database already has a non-admin user with id 1, V11 refuses to run; recreate the

@@ -49,38 +49,38 @@ class LoadPathApiIT extends AbstractToxiproxyIT {
 
         // Project with 3 milestones, funded and submitted.
         String due = Instant.now().plus(30, ChronoUnit.DAYS).toString();
-        JsonNode project = expect(post("/api/escrow/projects", null, actor(client, "CLIENT"),
+        JsonNode project = expect(post("/api/v1/projects", null, actor(client, "CLIENT"),
             "{\"clientId\":" + client + ",\"freelancerId\":" + freelancer + ",\"title\":\"p-" + run + "\","
                 + "\"reviewWindow\":\"P5D\",\"milestones\":["
                 + "{\"title\":\"m1\",\"amountPaise\":10000,\"dueAt\":\"" + due + "\"},"
                 + "{\"title\":\"m2\",\"amountPaise\":20000,\"dueAt\":\"" + due + "\"},"
                 + "{\"title\":\"m3\",\"amountPaise\":30000,\"dueAt\":\"" + due + "\"}]}"), 201);
         long projectId = project.path("id").asLong();
-        expect(post("/api/escrow/projects/" + projectId + "/fund", "fund-" + run, actor(client, "CLIENT"), ""), 200);
+        expect(post("/api/v1/projects/" + projectId + "/fund", "fund-" + run, actor(client, "CLIENT"), ""), 200);
 
-        JsonNode withMilestones = expect(get("/api/escrow/projects/" + projectId), 200);
+        JsonNode withMilestones = expect(get("/api/v1/projects/" + projectId), 200);
         JsonNode milestones = withMilestones.path("milestones");
         assertThat(milestones.size()).isEqualTo(3);
         long[] ids = new long[3];
         for (int i = 0; i < 3; i++) {
             ids[i] = milestones.get(i).path("id").asLong();
-            expect(post("/api/escrow/milestones/" + ids[i] + "/submit", "sub-" + run + i, actor(freelancer, "FREELANCER"), ""), 200);
+            expect(post("/api/v1/milestones/" + ids[i] + "/submit", "sub-" + run + i, actor(freelancer, "FREELANCER"), ""), 200);
         }
 
         // Scenario calls.
         expect(post("/api/v1/transfers", "tr-" + run, admin(),
             "{\"fromAccountId\":" + clientWallet + ",\"toAccountId\":" + client2Wallet + ",\"amountPaise\":500,\"memo\":\"load\"}"), 201);
-        expect(post("/api/escrow/milestones/" + ids[0] + "/approve", "appr-" + run, actor(client, "CLIENT"), ""), 200);
-        expect(post("/api/escrow/disputes", "disp-" + run, actor(client, "CLIENT"),
+        expect(post("/api/v1/milestones/" + ids[0] + "/approve", "appr-" + run, actor(client, "CLIENT"), ""), 200);
+        expect(post("/api/v1/disputes", "disp-" + run, actor(client, "CLIENT"),
             "{\"milestoneId\":" + ids[1] + ",\"reason\":\"load\"}"), 201);
         JsonNode payout = expect(post("/api/v1/payouts", "po-" + run, actor(freelancer, "FREELANCER"),
             "{\"amountPaise\":1000}"), 202);
         assertThat(payout.path("state").asText()).isEqualTo("CONFIRMED");
 
         // Conflicts and unknown ids are client errors, not 500s (the load tests treat 5xx as failures).
-        JsonNode again = expect(post("/api/escrow/milestones/" + ids[0] + "/approve", "appr2-" + run, actor(client, "CLIENT"), ""), 409);
+        JsonNode again = expect(post("/api/v1/milestones/" + ids[0] + "/approve", "appr2-" + run, actor(client, "CLIENT"), ""), 409);
         assertThat(again.path("code").asText()).isEqualTo("INVALID_STATE_TRANSITION");
-        expect(post("/api/escrow/milestones/999999999/approve", "appr3-" + run, actor(client, "CLIENT"), ""), 404);
+        expect(post("/api/v1/milestones/999999999/approve", "appr3-" + run, actor(client, "CLIENT"), ""), 404);
 
         expect(get("/api/v1/accounts/" + freelancerWallet), 200);
         JsonNode invariants = expect(get("/api/v1/admin/invariants", admin()), 200);
@@ -93,7 +93,7 @@ class LoadPathApiIT extends AbstractToxiproxyIT {
     }
 
     private long createUser(String name, String role) throws Exception {
-        return expect(post("/api/escrow/users", null, admin(), "{\"name\":\"" + name + "\",\"role\":\"" + role + "\"}"), 201)
+        return expect(post("/api/v1/users", null, admin(), "{\"name\":\"" + name + "\",\"role\":\"" + role + "\"}"), 201)
             .path("id").asLong();
     }
 

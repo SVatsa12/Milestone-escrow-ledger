@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Each money-moving endpoint requires an Idempotency-Key header.
  */
 @RestController
-@RequestMapping("/api/escrow")
+@RequestMapping("/api/v1")
 public class EscrowController {
 
     private final EscrowService escrowService;
@@ -42,7 +42,7 @@ public class EscrowController {
 
     /**
      * Create a new user (client or freelancer).
-     * POST /api/escrow/users
+     * POST /api/v1/users
      */
     @PostMapping("/users")
     public ResponseEntity<User> createUser(Actor actor, @RequestBody CreateUserRequest request) {
@@ -62,7 +62,7 @@ public class EscrowController {
 
     /**
      * Create a new project with milestones.
-     * POST /api/escrow/projects
+     * POST /api/v1/projects
      */
     @PostMapping("/projects")
     public ResponseEntity<Project> createProject(Actor actor, @RequestBody CreateProjectRequest request) {
@@ -95,7 +95,7 @@ public class EscrowController {
 
     /**
      * Fund a project (all milestones transition DRAFT -> FUNDED).
-     * POST /api/escrow/projects/{projectId}/fund
+     * POST /api/v1/projects/{projectId}/fund
      */
     @PostMapping("/projects/{projectId}/fund")
     public ResponseEntity<Void> fundProject(
@@ -113,7 +113,7 @@ public class EscrowController {
 
     /**
      * Submit a milestone (FUNDED -> SUBMITTED).
-     * POST /api/escrow/milestones/{milestoneId}/submit
+     * POST /api/v1/milestones/{milestoneId}/submit
      */
     @PostMapping("/milestones/{milestoneId}/submit")
     public ResponseEntity<Void> submitMilestone(
@@ -132,7 +132,7 @@ public class EscrowController {
     /**
      * Approve and release a milestone (SUBMITTED -> APPROVED -> RELEASED).
      * Money is released to freelancer minus fee.
-     * POST /api/escrow/milestones/{milestoneId}/approve
+     * POST /api/v1/milestones/{milestoneId}/approve
      */
     @PostMapping("/milestones/{milestoneId}/approve")
     public ResponseEntity<Void> approveMilestone(
@@ -150,7 +150,7 @@ public class EscrowController {
 
     /**
      * Cancel a milestone and refund if applicable.
-     * POST /api/escrow/milestones/{milestoneId}/cancel
+     * POST /api/v1/milestones/{milestoneId}/cancel
      */
     @PostMapping("/milestones/{milestoneId}/cancel")
     public ResponseEntity<Void> cancelMilestone(
@@ -170,7 +170,7 @@ public class EscrowController {
 
     /**
      * Get a project with all its milestones.
-     * GET /api/escrow/projects/{projectId}
+     * GET /api/v1/projects/{projectId}
      */
     @GetMapping("/projects/{projectId}")
     public ResponseEntity<ProjectWithMilestones> getProject(@PathVariable Long projectId) {

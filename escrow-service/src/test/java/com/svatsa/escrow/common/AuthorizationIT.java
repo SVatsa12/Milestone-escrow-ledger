@@ -63,17 +63,17 @@ class AuthorizationIT extends AbstractIntegrationTest {
     @DisplayName("create project: the named client (or an admin); another client or a freelancer is 403")
     void createProject() throws Exception {
         String body = ApiClient.projectBody(clientA, freelancerA, "p-" + run, 10_000);
-        forbidden(api.post("/api/escrow/projects", null, actor(clientB, "CLIENT"), body));
-        forbidden(api.post("/api/escrow/projects", null, actor(freelancerA, "FREELANCER"), body));
-        api.expect(api.post("/api/escrow/projects", null, actor(clientA, "CLIENT"), body), 201);
-        api.expect(api.post("/api/escrow/projects", null, ApiClient.admin(), body), 201);
+        forbidden(api.post("/api/v1/projects", null, actor(clientB, "CLIENT"), body));
+        forbidden(api.post("/api/v1/projects", null, actor(freelancerA, "FREELANCER"), body));
+        api.expect(api.post("/api/v1/projects", null, actor(clientA, "CLIENT"), body), 201);
+        api.expect(api.post("/api/v1/projects", null, ApiClient.admin(), body), 201);
     }
 
     @Test
     @DisplayName("fund: only the project's client")
     void fund() throws Exception {
         long projectA = project(clientA, freelancerA, 10_000, 20_000);
-        String path = "/api/escrow/projects/" + projectA + "/fund";
+        String path = "/api/v1/projects/" + projectA + "/fund";
 
         forbidden(api.post(path, key("f1"), actor(freelancerA, "FREELANCER"), ""));
         forbidden(api.post(path, key("f2"), actor(clientB, "CLIENT"), ""));
@@ -93,7 +93,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
         long projectA = fundedProject(clientA, freelancerA, 10_000);
         long projectB = fundedProject(clientB, freelancerB, 10_000);
         long milestoneA = milestones(projectA).get(0);
-        String path = "/api/escrow/milestones/" + milestoneA + "/submit";
+        String path = "/api/v1/milestones/" + milestoneA + "/submit";
 
         forbidden(api.post(path, key("s1"), actor(freelancerB, "FREELANCER"), ""));
         forbidden(api.post(path, key("s2"), actor(clientA, "CLIENT"), ""));
@@ -105,7 +105,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
 
         // ...and freelancer A can't submit on project B either.
         long milestoneB = milestones(projectB).get(0);
-        forbidden(api.post("/api/escrow/milestones/" + milestoneB + "/submit", key("s5"), actor(freelancerA, "FREELANCER"), ""));
+        forbidden(api.post("/api/v1/milestones/" + milestoneB + "/submit", key("s5"), actor(freelancerA, "FREELANCER"), ""));
         assertThat(state(milestoneB)).isEqualTo(MilestoneState.FUNDED);
     }
 
@@ -113,7 +113,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
     @DisplayName("approve: only the project's client; a rejected approve releases no money")
     void approve() throws Exception {
         long milestoneA = submittedMilestone(clientA, freelancerA, 10_000);
-        String path = "/api/escrow/milestones/" + milestoneA + "/approve";
+        String path = "/api/v1/milestones/" + milestoneA + "/approve";
 
         forbidden(api.post(path, key("a1"), actor(freelancerA, "FREELANCER"), ""));
         forbidden(api.post(path, key("a2"), actor(clientB, "CLIENT"), ""));
@@ -130,7 +130,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
     void cancel() throws Exception {
         long projectA = project(clientA, freelancerA, 10_000);
         long milestoneA = milestones(projectA).get(0);
-        String path = "/api/escrow/milestones/" + milestoneA + "/cancel";
+        String path = "/api/v1/milestones/" + milestoneA + "/cancel";
 
         forbidden(api.post(path, key("c1"), actor(freelancerA, "FREELANCER"), ""));
         forbidden(api.post(path, key("c2"), actor(clientB, "CLIENT"), ""));
@@ -153,12 +153,12 @@ class AuthorizationIT extends AbstractIntegrationTest {
         }
 
         for (String[] outsider : List.of(actor(clientB, "CLIENT"), actor(freelancerB, "FREELANCER"), ApiClient.admin())) {
-            forbidden(api.post("/api/escrow/disputes", key("d"), outsider, disputeBody(ms.get(0))));
+            forbidden(api.post("/api/v1/disputes", key("d"), outsider, disputeBody(ms.get(0))));
         }
         assertThat(state(ms.get(0))).isEqualTo(MilestoneState.SUBMITTED);
 
-        api.expect(api.post("/api/escrow/disputes", key("d1"), actor(clientA, "CLIENT"), disputeBody(ms.get(0))), 201);
-        api.expect(api.post("/api/escrow/disputes", key("d2"), actor(freelancerA, "FREELANCER"), disputeBody(ms.get(1))), 201);
+        api.expect(api.post("/api/v1/disputes", key("d1"), actor(clientA, "CLIENT"), disputeBody(ms.get(0))), 201);
+        api.expect(api.post("/api/v1/disputes", key("d2"), actor(freelancerA, "FREELANCER"), disputeBody(ms.get(1))), 201);
         assertThat(states(projectA)).containsOnly(MilestoneState.DISPUTED);
     }
 
@@ -166,9 +166,9 @@ class AuthorizationIT extends AbstractIntegrationTest {
     @DisplayName("resolve dispute: ADMIN only")
     void resolveDispute() throws Exception {
         long milestoneA = submittedMilestone(clientA, freelancerA, 10_000);
-        long disputeId = api.expect(api.post("/api/escrow/disputes", key("d"), actor(clientA, "CLIENT"),
+        long disputeId = api.expect(api.post("/api/v1/disputes", key("d"), actor(clientA, "CLIENT"),
             disputeBody(milestoneA)), 201).path("id").asLong();
-        String path = "/api/escrow/disputes/" + disputeId + "/resolve";
+        String path = "/api/v1/disputes/" + disputeId + "/resolve";
         String body = "{\"freelancerSharePaise\":6000,\"clientSharePaise\":4000,\"resolutionNote\":\"split\"}";
 
         forbidden(api.post(path, key("r1"), actor(clientA, "CLIENT"), body));
@@ -301,15 +301,15 @@ class AuthorizationIT extends AbstractIntegrationTest {
         String body = "{\"name\":\"new-" + run + "\",\"role\":\"CLIENT\"}";
         long usersBefore = userCount();
 
-        forbidden(api.post("/api/escrow/users", null, actor(clientA, "CLIENT"), body));
-        forbidden(api.post("/api/escrow/users", null, actor(freelancerA, "FREELANCER"), body));
-        unauthenticated(api.postWithoutActor("/api/escrow/users", null, body));
+        forbidden(api.post("/api/v1/users", null, actor(clientA, "CLIENT"), body));
+        forbidden(api.post("/api/v1/users", null, actor(freelancerA, "FREELANCER"), body));
+        unauthenticated(api.postWithoutActor("/api/v1/users", null, body));
         assertThat(userCount()).as("nobody created").isEqualTo(usersBefore);
 
-        long created = api.expect(api.post("/api/escrow/users", null, ApiClient.admin(), body), 201).path("id").asLong();
+        long created = api.expect(api.post("/api/v1/users", null, ApiClient.admin(), body), 201).path("id").asLong();
         assertThat(walletBalance("CLIENT_WALLET:" + created)).isZero();
         // An admin can create another admin, who can then act as ADMIN.
-        long admin2 = api.expect(api.post("/api/escrow/users", null, ApiClient.admin(),
+        long admin2 = api.expect(api.post("/api/v1/users", null, ApiClient.admin(),
             "{\"name\":\"admin-" + run + "\",\"role\":\"ADMIN\"}"), 201).path("id").asLong();
         api.expect(api.get("/api/v1/admin/invariants", actor(admin2, "ADMIN")), 200);
     }
@@ -322,7 +322,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
         // Before the resolver checked users, client A claiming ADMIN got 200 here.
         unauthenticated(api.get("/api/v1/admin/invariants", actor(clientA, "ADMIN")));
         unauthenticated(api.get("/api/v1/admin/invariants", actor(freelancerA, "ADMIN")));
-        unauthenticated(api.post("/api/escrow/users", null, actor(clientA, "ADMIN"), "{\"name\":\"x\",\"role\":\"ADMIN\"}"));
+        unauthenticated(api.post("/api/v1/users", null, actor(clientA, "ADMIN"), "{\"name\":\"x\",\"role\":\"ADMIN\"}"));
         long walletA = accountId("CLIENT_WALLET:" + clientA);
         long walletB = accountId("CLIENT_WALLET:" + clientB);
         unauthenticated(api.post("/api/v1/transfers", key("sp"), actor(clientB, "ADMIN"),
@@ -331,7 +331,7 @@ class AuthorizationIT extends AbstractIntegrationTest {
         unauthenticated(api.post("/api/v1/deposits", key("sp2"), actor(1, "CLIENT"), "{\"amountPaise\":100}"));
         // Freelancer A claiming CLIENT can't fund client A's project either.
         long projectA = project(clientA, freelancerA, 10_000);
-        unauthenticated(api.post("/api/escrow/projects/" + projectA + "/fund", key("sp3"), actor(freelancerA, "CLIENT"), ""));
+        unauthenticated(api.post("/api/v1/projects/" + projectA + "/fund", key("sp3"), actor(freelancerA, "CLIENT"), ""));
 
         assertThat(states(projectA)).containsOnly(MilestoneState.DRAFT);
         assertThat(walletBalance("CLIENT_WALLET:" + clientA)).isEqualTo(1_000_000);
@@ -345,14 +345,14 @@ class AuthorizationIT extends AbstractIntegrationTest {
             unauthenticated(api.get("/api/v1/admin/invariants", actor(unknown, role)));
             unauthenticated(api.post("/api/v1/payouts", key("unk"), actor(unknown, role), "{\"amountPaise\":100}"));
         }
-        unauthenticated(api.post("/api/escrow/users", null, actor(unknown, "ADMIN"), "{\"name\":\"x\",\"role\":\"CLIENT\"}"));
+        unauthenticated(api.post("/api/v1/users", null, actor(unknown, "ADMIN"), "{\"name\":\"x\",\"role\":\"CLIENT\"}"));
     }
 
     @Test
     @DisplayName("missing or invalid actor headers are 401 UNAUTHENTICATED; SYSTEM can't come from headers")
     void missingOrInvalidHeadersAre401() throws Exception {
         long projectA = project(clientA, freelancerA, 10_000);
-        String fund = "/api/escrow/projects/" + projectA + "/fund";
+        String fund = "/api/v1/projects/" + projectA + "/fund";
 
         unauthenticated(api.postWithoutActor(fund, key("u1"), ""));
         unauthenticated(api.post(fund, key("u2"), new String[]{"X-Actor-Id", String.valueOf(clientA)}, ""));
@@ -426,13 +426,13 @@ class AuthorizationIT extends AbstractIntegrationTest {
     }
 
     private long project(long client, long freelancer, long... amounts) throws Exception {
-        return api.expect(api.post("/api/escrow/projects", null, actor(client, "CLIENT"),
+        return api.expect(api.post("/api/v1/projects", null, actor(client, "CLIENT"),
             ApiClient.projectBody(client, freelancer, "p-" + run, amounts)), 201).path("id").asLong();
     }
 
     private long fundedProject(long client, long freelancer, long... amounts) throws Exception {
         long id = project(client, freelancer, amounts);
-        api.expect(api.post("/api/escrow/projects/" + id + "/fund", key("fund"), actor(client, "CLIENT"), ""), 200);
+        api.expect(api.post("/api/v1/projects/" + id + "/fund", key("fund"), actor(client, "CLIENT"), ""), 200);
         return id;
     }
 
@@ -443,11 +443,11 @@ class AuthorizationIT extends AbstractIntegrationTest {
     }
 
     private void submit(long milestone, long freelancer) throws Exception {
-        api.expect(api.post("/api/escrow/milestones/" + milestone + "/submit", key("sub"), actor(freelancer, "FREELANCER"), ""), 200);
+        api.expect(api.post("/api/v1/milestones/" + milestone + "/submit", key("sub"), actor(freelancer, "FREELANCER"), ""), 200);
     }
 
     private void approve(long milestone, long client) throws Exception {
-        api.expect(api.post("/api/escrow/milestones/" + milestone + "/approve", key("appr"), actor(client, "CLIENT"), ""), 200);
+        api.expect(api.post("/api/v1/milestones/" + milestone + "/approve", key("appr"), actor(client, "CLIENT"), ""), 200);
     }
 
     private static String disputeBody(long milestoneId) {

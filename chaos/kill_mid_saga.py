@@ -43,7 +43,7 @@ def run(point):
         app = container("escrow-service")
 
         # A freelancer with money: created by the bootstrap admin, funded with a simulated deposit.
-        _, user = http("POST", APP + "/api/escrow/users", ADMIN, {"name": f"k1-{uuid.uuid4().hex[:8]}", "role": "FREELANCER"})
+        _, user = http("POST", APP + "/api/v1/users", ADMIN, {"name": f"k1-{uuid.uuid4().hex[:8]}", "role": "FREELANCER"})
         freelancer = user["id"]
         wallet = int(psql(db, f"SELECT id FROM accounts WHERE code = 'FREELANCER_WALLET:{freelancer}'"))
         status, _ = http("POST", APP + "/api/v1/admin/deposits/simulate", {**ADMIN, "Idempotency-Key": f"k1-seed-{uuid.uuid4()}"},

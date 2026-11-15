@@ -45,20 +45,20 @@ class ErrorMappingIT extends AbstractToxiproxyIT {
         long freelancer = api.createUser("ef-" + run, "FREELANCER");
         fund("CLIENT_WALLET:" + client, 100_000);
 
-        long projectId = api.expect(api.post("/api/escrow/projects", null, actor(client, "CLIENT"),
+        long projectId = api.expect(api.post("/api/v1/projects", null, actor(client, "CLIENT"),
             ApiClient.projectBody(client, freelancer, "e-" + run, 10_000)), 201).path("id").asLong();
-        api.expect(api.post("/api/escrow/projects/" + projectId + "/fund", "efund-" + run, actor(client, "CLIENT"), ""), 200);
-        long milestoneId = api.expect(api.get("/api/escrow/projects/" + projectId), 200)
+        api.expect(api.post("/api/v1/projects/" + projectId + "/fund", "efund-" + run, actor(client, "CLIENT"), ""), 200);
+        long milestoneId = api.expect(api.get("/api/v1/projects/" + projectId), 200)
             .path("milestones").get(0).path("id").asLong();
-        api.expect(api.post("/api/escrow/milestones/" + milestoneId + "/submit", "esub-" + run, actor(freelancer, "FREELANCER"), ""), 200);
-        api.expect(api.post("/api/escrow/milestones/" + milestoneId + "/approve", "eappr-" + run, actor(client, "CLIENT"), ""), 200);
+        api.expect(api.post("/api/v1/milestones/" + milestoneId + "/submit", "esub-" + run, actor(freelancer, "FREELANCER"), ""), 200);
+        api.expect(api.post("/api/v1/milestones/" + milestoneId + "/approve", "eappr-" + run, actor(client, "CLIENT"), ""), 200);
 
         // Used to fall through to the generic handler as 500 INTERNAL_ERROR.
-        JsonNode again = api.expect(api.post("/api/escrow/milestones/" + milestoneId + "/approve",
+        JsonNode again = api.expect(api.post("/api/v1/milestones/" + milestoneId + "/approve",
             "eappr2-" + run, actor(client, "CLIENT"), ""), 409);
         assertThat(again.path("code").asText()).isEqualTo("INVALID_STATE_TRANSITION");
 
-        JsonNode missing = api.expect(api.post("/api/escrow/milestones/999999999/approve",
+        JsonNode missing = api.expect(api.post("/api/v1/milestones/999999999/approve",
             "eappr3-" + run, actor(client, "CLIENT"), ""), 404);
         assertThat(missing.path("code").asText()).isEqualTo("NOT_FOUND");
     }

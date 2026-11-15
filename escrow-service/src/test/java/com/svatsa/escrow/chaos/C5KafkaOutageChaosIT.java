@@ -92,7 +92,7 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
         int duringOutage = 0;
         String due = Instant.now().plus(Duration.ofDays(30)).toString();
         for (int p = 0; p < PROJECTS; p++) {
-            HttpResponse<String> created = op(api.post("/api/escrow/projects", null, actor(client, "CLIENT"),
+            HttpResponse<String> created = op(api.post("/api/v1/projects", null, actor(client, "CLIENT"),
                 "{\"clientId\":" + client + ",\"freelancerId\":" + freelancer + ",\"title\":\"c5-" + p + "\","
                     + "\"reviewWindow\":\"P5D\",\"milestones\":[{\"title\":\"m\",\"amountPaise\":10000,\"dueAt\":\"" + due + "\"}]}"));
             if (created.statusCode() != 201) {
@@ -102,15 +102,15 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
             ok++;
             long projectId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(created.body()).path("id").asLong();
             duringOutage += paused.get() ? 1 : 0;
-            ok += expect(failures, op(api.post("/api/escrow/projects/" + projectId + "/fund", "c5-fund-" + run + p,
+            ok += expect(failures, op(api.post("/api/v1/projects/" + projectId + "/fund", "c5-fund-" + run + p,
                 actor(client, "CLIENT"), "")), 200);
             long milestone = jdbcClient.sql("SELECT id FROM milestones WHERE project_id = ?").param(projectId)
                 .query(Long.class).single();
             duringOutage += paused.get() ? 1 : 0;
-            ok += expect(failures, op(api.post("/api/escrow/milestones/" + milestone + "/submit", "c5-sub-" + run + p,
+            ok += expect(failures, op(api.post("/api/v1/milestones/" + milestone + "/submit", "c5-sub-" + run + p,
                 actor(freelancer, "FREELANCER"), "")), 200);
             duringOutage += paused.get() ? 1 : 0;
-            ok += expect(failures, op(api.post("/api/escrow/milestones/" + milestone + "/approve", "c5-appr-" + run + p,
+            ok += expect(failures, op(api.post("/api/v1/milestones/" + milestone + "/approve", "c5-appr-" + run + p,
                 actor(client, "CLIENT"), "")), 200);
             duringOutage += paused.get() ? 1 : 0;
         }

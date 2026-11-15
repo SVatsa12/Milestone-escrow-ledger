@@ -139,8 +139,8 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
         fundOverHttp(project);
         long m = milestones(project).get(0);
         submit(m);
-        api.expect(api.post("/api/escrow/disputes", key(), actor(client, "CLIENT"), disputeBody(m)), 201);
-        rejected(api.post("/api/escrow/disputes", key(), actor(freelancer, "FREELANCER"), disputeBody(m)));
+        api.expect(api.post("/api/v1/disputes", key(), actor(client, "CLIENT"), disputeBody(m)), 201);
+        rejected(api.post("/api/v1/disputes", key(), actor(freelancer, "FREELANCER"), disputeBody(m)));
 
         // The disputes row (one per milestone) also blocks a second freeze, so the service can't
         // be driven past it; post the same business action straight to the ledger instead.
@@ -158,11 +158,11 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
         fundOverHttp(project);
         long m = milestones(project).get(0);
         submit(m);
-        long dispute = api.expect(api.post("/api/escrow/disputes", key(), actor(client, "CLIENT"), disputeBody(m)), 201)
+        long dispute = api.expect(api.post("/api/v1/disputes", key(), actor(client, "CLIENT"), disputeBody(m)), 201)
             .path("id").asLong();
         Actor admin = newAdmin();
         String body = "{\"freelancerSharePaise\":0,\"clientSharePaise\":10000,\"resolutionNote\":\"refund\"}";
-        String path = "/api/escrow/disputes/" + dispute + "/resolve";
+        String path = "/api/v1/disputes/" + dispute + "/resolve";
         api.expect(api.post(path, key(), actor(admin.id(), "ADMIN"), body), 200);
         // A resolved dispute used to throw IllegalStateException here: a 500.
         assertThat(api.expect(api.post(path, key(), actor(admin.id(), "ADMIN"), body), 409).path("code").asText())
@@ -279,7 +279,7 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
     }
 
     private long project(long... amounts) throws Exception {
-        return api.expect(api.post("/api/escrow/projects", null, actor(client, "CLIENT"),
+        return api.expect(api.post("/api/v1/projects", null, actor(client, "CLIENT"),
             ApiClient.projectBody(client, freelancer, "ik-" + run, amounts)), 201).path("id").asLong();
     }
 
@@ -288,7 +288,7 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
     }
 
     private void submit(long m) throws Exception {
-        api.expect(api.post("/api/escrow/milestones/" + m + "/submit", key(), actor(freelancer, "FREELANCER"), ""), 200);
+        api.expect(api.post("/api/v1/milestones/" + m + "/submit", key(), actor(freelancer, "FREELANCER"), ""), 200);
     }
 
     private void setState(long milestoneId, MilestoneState state) {
@@ -300,15 +300,15 @@ class LedgerIdempotencyKeyIT extends AbstractIntegrationTest {
     }
 
     private static String fundPath(long project) {
-        return "/api/escrow/projects/" + project + "/fund";
+        return "/api/v1/projects/" + project + "/fund";
     }
 
     private static String approvePath(long m) {
-        return "/api/escrow/milestones/" + m + "/approve";
+        return "/api/v1/milestones/" + m + "/approve";
     }
 
     private static String cancelPath(long m) {
-        return "/api/escrow/milestones/" + m + "/cancel";
+        return "/api/v1/milestones/" + m + "/cancel";
     }
 
     private static String disputeBody(long m) {

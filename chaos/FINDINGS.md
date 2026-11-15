@@ -732,6 +732,22 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   - With the lock, RateLimiterIT's context could run its own relay again (#51), but it stays
     disabled there: one relay per test JVM is simpler.
 
+### 53. C6 quietly stopped racing after the test pool shrank to 5
+- **Found by:** reading C6's notes on the first chaos run with the leader lock, not by a failure.
+  C6 still passed (every milestone RELEASED xor DISPUTED, one journal entry each), but auto-release
+  won 100 of 100 milestones and 98 of 100 in two runs, with all 200 approve/dispute HTTP calls
+  answering 409. Run 2 (pool 30) had split them 53 auto / 36 approve / 11 dispute.
+- **Root cause:** the README audit's test-speed change set the test Hikari pool to 5. C6 releases
+  200 HTTP requests and 4 in-process auto-release loops at the same instant. Each HTTP request
+  needs a connection; the job threads, already in the JVM and looping, held the few connections
+  and claimed every milestone before the requests got one. The race was decided by the pool, not by
+  the state machine, so C6 no longer tested approve or dispute against auto-release.
+- **Fix:** `AbstractChaosIT` runs the chaos contexts with production's pool size (20). Chaos has its
+  own JVM (`-Pchaos`), so the default suite keeps its pool of 5. Verified: the same C6 at pool 20
+  split 64 auto / 29 approve / 7 dispute.
+- **Lesson:** a passing chaos scenario can still have stopped exercising its fault. C6 records who
+  won, and that note is what showed it.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

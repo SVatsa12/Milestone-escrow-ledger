@@ -23,6 +23,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * real check rather than one polluted by earlier scenarios in the same JVM.
  */
 @Tag("chaos")
+// Production's pool size (application.yml / compose: 20), not the unit suite's 5. Chaos scenarios
+// race HTTP requests against in-process jobs; with 5 connections the requests queued behind the jobs
+// and C6's approve/dispute side almost never won a milestone (100 of 100 went to auto-release),
+// which hollowed out the race. Chaos runs in its own JVM (-Pchaos), so this costs the default suite
+// nothing.
+@org.springframework.test.context.TestPropertySource(properties = "spring.datasource.hikari.maximum-pool-size=20")
 public abstract class AbstractChaosIT extends AbstractToxiproxyIT {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");

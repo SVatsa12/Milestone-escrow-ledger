@@ -804,6 +804,32 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
     code (ArchUnit can't see `synchronized` blocks; there are none).
 - **Lesson:** run the virtual-thread checks on the runtime's JDK. A newer local JDK hides pinning.
 
+### 56. The build ran on JDK 24 while production runs JDK 21
+- **Gap:** the runtime images are `eclipse-temurin:21` (21.0.13) and CI uses `setup-java` 21, but
+  local `./mvnw` ran on whatever `JAVA_HOME` held, here JDK 24. That is how #55 hid: JDK 24
+  (JEP 491) no longer pins virtual threads in `synchronized` code, so every local test and chaos
+  run passed, while the JDK 21 container deadlocked under load after a kill -9. Nothing stopped a
+  build on the wrong JDK.
+- **Fix:**
+  - The root pom runs `maven-enforcer-plugin` `requireJavaVersion [21,22)`. Any other JDK fails at
+    `validate`, with a message that says how to point `JAVA_HOME` at JDK 21.
+  - `.mvn/jvm.config` can't select a JDK: it only passes options to the JVM Maven already runs on.
+    Toolchains would move compiling and test forks to 21 but not Maven itself, which is what the
+    enforcer checks. So the requirement is `JAVA_HOME` = JDK 21.
+  - Temurin 21.0.13+9, the same build as the image, is installed per-user at
+    `C:\Users\qshub\.jdks\jdk-21.0.13+9` (checksum checked against Adoptium's).
+  - AGENTS.md: "Build and test only on JDK 21, the same as the runtime image."
+  - CI already used Temurin 21; confirmed in `ci.yml`.
+- **JDK 21 vs 24, same commit, `./mvnw -B verify`:**
+  - Identical results: 153 integration, 51 unit and 19 provider tests, all green on both.
+  - Total test time 525 s vs 526 s. `OutboxRelayThroughputIT` took 6.3 s on 21 vs 3.7 s on 24, one
+    sample each, inside its 10 s budget.
+  - JDK 24 only: `sun.misc.Unsafe` deprecation warnings (Guava, ArchUnit's shaded Guava, Netty) and
+    a restricted-native-access warning (Jansi). JDK 21: none of these. Both show the Byte Buddy
+    dynamic-agent warning.
+  - The behavioural difference is virtual-thread pinning in `synchronized` code. It happens on 21,
+    and `OutboxRelayLeadershipPinningIT` catches it there.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

@@ -366,7 +366,7 @@ Each of these has a regression test outside the chaos tag. Full write-ups: [chao
 
 ## Running it
 
-**Prerequisites:** Docker, JDK 21, Python 3 (chaos and benchmarks). k6 runs in a container.
+**Prerequisites:** Docker, **JDK 21** (the build fails on any other JDK: point `JAVA_HOME` at a JDK 21, the runtime image's version), Python 3 (chaos and benchmarks). k6 runs in a container.
 
 ```bash
 docker compose up -d                                   # postgres, kafka, redis, toxiproxy

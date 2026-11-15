@@ -7,6 +7,7 @@ A milestone-based escrow service for freelancers and clients. The client pays a 
 
 ## Tech stack (do not substitute)
 - Java 21, Spring Boot 3.5.16, Maven multi-module (`escrow-service`, `mock-payout-provider`)
+- **Build and test only on JDK 21, the same as the runtime image.** `maven-enforcer-plugin` fails the build on any other JDK; point `JAVA_HOME` at a JDK 21. A newer JDK hides real bugs: JDK 24 stopped pinning virtual threads in `synchronized` code, so a production deadlock only showed in the JDK 21 container (chaos/FINDINGS.md #55, #56).
 - PostgreSQL 16 with Flyway migrations. Use Spring `JdbcClient` for all ledger and escrow SQL. **No JPA/Hibernate in the money path.**
 - Apache Kafka 4.x in KRaft mode, through Spring for Apache Kafka
 - Redis 7, used only for rate limiting

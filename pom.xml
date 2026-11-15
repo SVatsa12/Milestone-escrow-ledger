@@ -62,6 +62,30 @@
 
     <build>
         <plugins>
+            <!-- JDK parity (chaos/FINDINGS.md #56): build and test only on JDK 21, the runtime image's JDK.
+                 A newer JDK hid a production deadlock: JDK 24 no longer pins virtual threads in
+                 synchronized code, JDK 21 does (#55). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>require-jdk-21</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>Build and test only on JDK 21, the same as the runtime image (AGENTS.md, chaos/FINDINGS.md #56). Point JAVA_HOME at a JDK 21, e.g. Temurin 21 (Windows: setx JAVA_HOME "C:\path\to\jdk-21", then open a new shell).</message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>

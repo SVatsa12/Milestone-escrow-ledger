@@ -51,6 +51,7 @@ public class KafkaConsumerConfig {
         // is "<topic>-dlt" on the same partition number, a topic nothing creates: the producer
         // looped on UNKNOWN_TOPIC_OR_PARTITION and the poison record went nowhere. Partition -1
         // lets the producer choose (the DLTs have one partition).
+        // The one KafkaTemplate besides the outbox relay (AGENTS.md rule 11): it only re-publishes poison records to .DLT, never domain events.
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(new KafkaTemplate<>(dltProducer),
             (record, ex) -> new org.apache.kafka.common.TopicPartition(record.topic() + ".DLT", -1));
         DefaultErrorHandler handler = new DefaultErrorHandler((record, ex) -> {

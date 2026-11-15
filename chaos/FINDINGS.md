@@ -635,6 +635,18 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
 - **Regression:** `MoneyTest` covers 0, 5, 100, 99,999 and 1,00,00,000 paise, plus a negative
   amount, `Long.MAX_VALUE` and `Long.MIN_VALUE`.
 
+### 48. A second KafkaTemplate outside the outbox, undocumented
+- **Found by:** grepping for `KafkaTemplate`. AGENTS.md rule 11 said nothing but the outbox relay
+  calls it, yet `KafkaConsumerConfig` builds one for the `DeadLetterPublishingRecoverer` (#30). It
+  is correct where it is: it only re-publishes records a consumer could not process to
+  `<topic>.DLT`, and a DLT copy is not a domain event that must commit with the database.
+- **Fix:** kept, and made an explicit exception. AGENTS.md now reads "nothing calls
+  `KafkaTemplate` except the outbox relay and the consumer dead-letter recoverer", and
+  `KafkaConsumerConfig` says why in a comment.
+- **Regression:** `ArchitectureRulesTest` forbids any class except `OutboxRelay` and
+  `KafkaConsumerConfig` from depending on `KafkaOperations` or a Kafka `Producer`. The test also
+  shows the rule rejects a class that sends directly.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

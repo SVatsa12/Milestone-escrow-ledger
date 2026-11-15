@@ -15,7 +15,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * AGENTS.md rules that a grep found broken once, enforced on escrow-service's main classes so they
+ * AGENTS.md rules that a grep found broken once (time from the Clock, rule 11 on Kafka), enforced on escrow-service's main classes so they
  * can't come back.
  */
 @DisplayName("Architecture rules")
@@ -69,6 +69,37 @@ class ArchitectureRulesTest {
                 .as(offender.getSimpleName()).isInstanceOf(AssertionError.class);
         }
         noSystemTime().check(new ClassFileImporter().importClasses(UsesTheClock.class));
+    }
+
+    /**
+     * AGENTS.md rule 11: domain events reach Kafka only through the outbox relay. The consumer
+     * dead-letter recoverer is the one documented exception (it re-publishes poison records to .DLT).
+     */
+    private static com.tngtech.archunit.lang.ArchRule onlyRelayAndDeadLetterTouchKafkaProducers() {
+        return noClasses()
+            .that().doNotHaveFullyQualifiedName(com.svatsa.escrow.outbox.OutboxRelay.class.getName())
+            .and().doNotHaveFullyQualifiedName(com.svatsa.escrow.consumers.KafkaConsumerConfig.class.getName())
+            .should().dependOnClassesThat().areAssignableTo(org.springframework.kafka.core.KafkaOperations.class)
+            .orShould().dependOnClassesThat().areAssignableTo(org.apache.kafka.clients.producer.Producer.class)
+            .because("AGENTS.md rule 11: nothing calls KafkaTemplate except the outbox relay and the dead-letter recoverer");
+    }
+
+    @Test
+    @DisplayName("only the outbox relay and the dead-letter recoverer use KafkaTemplate")
+    void onlyTheRelayAndTheDeadLetterRecovererUseKafkaTemplate() {
+        onlyRelayAndDeadLetterTouchKafkaProducers().check(MAIN);
+    }
+
+    @Test
+    @DisplayName("the KafkaTemplate rule catches any other class")
+    void kafkaRuleCatchesOtherClasses() {
+        assertThatThrownBy(() -> onlyRelayAndDeadLetterTouchKafkaProducers()
+                .check(new ClassFileImporter().importClasses(SendsDirectly.class)))
+            .isInstanceOf(AssertionError.class);
+    }
+
+    static class SendsDirectly {
+        void f(org.springframework.kafka.core.KafkaTemplate<String, String> t) { t.send("escrow.milestone-events", "x"); }
     }
 
     static class UsesInstantNow { Object f() { return java.time.Instant.now(); } }

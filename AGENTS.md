@@ -45,7 +45,7 @@ These hold after every operation, every crash, and every chaos run. Any change t
 8. **The same idempotency key never moves money twice.** Every money-moving entry carries a unique `idempotency_key`. API retries return the stored first response.
 9. **Milestone state changes only through `MilestoneStateMachine`** using a conditional `UPDATE ... WHERE id = ? AND state = ?`. If 0 rows change, that's a conflict and nothing else in the transaction commits.
 10. **Escrow conservation:** each project's ESCROW balance equals the sum of its milestones in `FUNDED`, `SUBMITTED`, or `APPROVED`. Its DISPUTE_HOLD balance equals the sum of its milestones in `DISPUTED`. PAYOUT_IN_FLIGHT equals the sum of payouts in `RESERVED`, `PROCESSING`, or `UNKNOWN`.
-11. **DB and Kafka never disagree.** Domain events go into `outbox` in the same transaction as the state change and postings. Nothing calls `KafkaTemplate` directly except the outbox relay.
+11. **DB and Kafka never disagree.** Domain events go into `outbox` in the same transaction as the state change and postings. Nothing calls `KafkaTemplate` except the outbox relay and the consumer dead-letter recoverer (`KafkaConsumerConfig`, which only re-publishes records a consumer could not process to `<topic>.DLT`; it never publishes domain events). `ArchitectureRulesTest` enforces this.
 12. **Never retry a payout blindly.** A timeout means `UNKNOWN`. Only the recovery job, after a status check with the provider, decides what happens next.
 
 ## Account model

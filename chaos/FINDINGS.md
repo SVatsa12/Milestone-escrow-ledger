@@ -829,6 +829,11 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
     dynamic-agent warning.
   - The behavioural difference is virtual-thread pinning in `synchronized` code. It happens on 21,
     and `OutboxRelayLeadershipPinningIT` catches it there.
+- **Pinning guard extended:** ArchUnit covers `synchronized` methods (#55) but can't see blocks.
+  `ArchitectureRulesTest.noSynchronizedBlocksInMainSources` scans `src/main/java` for
+  `synchronized\s*\(` outside comments, strings, text blocks and char literals. It found none, so
+  there was nothing to fix or justify. `sourceScanFindsBlocksOnly` proves the scanner finds real
+  blocks and ignores the comment and string forms.
 
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
@@ -123,6 +124,101 @@ class ArchitectureRulesTest {
     void synchronizedRuleCatchesViolations() {
         assertThatThrownBy(() -> noSynchronizedMethods().check(new ClassFileImporter().importClasses(LocksAMonitor.class)))
             .isInstanceOf(AssertionError.class);
+    }
+
+    /** {@code synchronized (lock) { ... }}: ArchUnit sees only method modifiers, so blocks are found in source. */
+    private static final java.util.regex.Pattern SYNCHRONIZED_BLOCK = java.util.regex.Pattern.compile("\\bsynchronized\\s*\\(");
+
+    @Test
+    @DisplayName("no synchronized blocks in src/main/java (virtual-thread pinning, source scan)")
+    void noSynchronizedBlocksInMainSources() throws java.io.IOException {
+        java.nio.file.Path root = java.nio.file.Path.of("src", "main", "java");   // tests run in the module directory
+        org.assertj.core.api.Assertions.assertThat(root).isDirectory();
+        List<String> hits = new java.util.ArrayList<>();
+        int scanned = 0;
+        try (var files = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                scanned++;
+                hits.addAll(synchronizedBlocks(root.relativize(file).toString(), java.nio.file.Files.readString(file)));
+            }
+        }
+        org.assertj.core.api.Assertions.assertThat(scanned).as("java files scanned").isGreaterThan(50);
+        org.assertj.core.api.Assertions.assertThat(hits)
+            .as("synchronized blocks pin virtual threads on JDK 21 (FINDINGS #45, #55); use java.util.concurrent locks")
+            .isEmpty();
+    }
+
+    @Test
+    @DisplayName("the source scan finds a synchronized block and ignores comments, strings and text blocks")
+    void sourceScanFindsBlocksOnly() {
+        String code = """
+            class X {
+                // synchronized (inALineComment) {}
+                /* synchronized (inABlockComment) {} */
+                /** synchronized(inJavadoc) */
+                String s = "synchronized (inAString)";
+                String t = \"""
+                    synchronized (inATextBlock)
+                    \""";
+                char c = '(';
+                synchronized void method() { }
+                void f() { synchronized (this) { } }
+                void g() { synchronized(lock) { } }
+            }
+            """;
+        org.assertj.core.api.Assertions.assertThat(synchronizedBlocks("X.java", code)).containsExactly("X.java:11", "X.java:12");
+    }
+
+    /** "file:line" of every synchronized block outside comments, strings, text blocks and char literals. */
+    static List<String> synchronizedBlocks(String file, String source) {
+        String code = stripCommentsAndLiterals(source);
+        List<String> hits = new java.util.ArrayList<>();
+        var m = SYNCHRONIZED_BLOCK.matcher(code);
+        while (m.find()) {
+            long line = code.substring(0, m.start()).chars().filter(ch -> ch == '\n').count() + 1;
+            hits.add(file + ":" + line);
+        }
+        return hits;
+    }
+
+    /** Blanks comments and literals (newlines kept, so line numbers stay right). */
+    static String stripCommentsAndLiterals(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        int i = 0, n = s.length();
+        while (i < n) {
+            char c = s.charAt(i);
+            if (s.startsWith("//", i)) {
+                while (i < n && s.charAt(i) != '\n') { out.append(' '); i++; }
+            } else if (s.startsWith("/*", i)) {
+                int end = s.indexOf("*/", i + 2);
+                end = end < 0 ? n : end + 2;
+                blank(s, i, end, out);
+                i = end;
+            } else if (s.startsWith("\"\"\"", i)) {
+                int end = s.indexOf("\"\"\"", i + 3);
+                end = end < 0 ? n : end + 3;
+                blank(s, i, end, out);
+                i = end;
+            } else if (c == '"' || c == '\'') {
+                int j = i + 1;
+                while (j < n && s.charAt(j) != c && s.charAt(j) != '\n') {
+                    j += s.charAt(j) == '\\' ? 2 : 1;
+                }
+                int end = Math.min(n, j + 1);
+                blank(s, i, end, out);
+                i = end;
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out.toString();
+    }
+
+    private static void blank(String s, int from, int to, StringBuilder out) {
+        for (int k = from; k < to; k++) {
+            out.append(s.charAt(k) == '\n' ? '\n' : ' ');
+        }
     }
 
     static class LocksAMonitor {

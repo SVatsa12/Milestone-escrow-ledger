@@ -120,8 +120,12 @@ def main(argv):
         notes["kills"] = len(kills)
         notes["killExitCodes"] = sorted(set(kills))
         notes["k6ExitCode"] = k6.returncode
-        if len(kills) < 3:
-            violations.append(f"only {len(kills)} kills happened; the scenario proved little")
+        # The fault must actually have happened: at least 3 REAL kills, i.e. the container died with
+        # exit code 137 (SIGKILL). A kill that didn't land (another exit code) doesn't count (FINDINGS #54).
+        real_kills = sum(1 for code in kills if code == 137)
+        notes["realKills"] = real_kills
+        if real_kills < 3:
+            violations.append(f"fault did not bite: only {real_kills} real kills (exit 137) of {len(kills)} attempts; need at least 3")
 
         violations_after, mismatches = checks(db)
         violations += violations_after

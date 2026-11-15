@@ -100,6 +100,11 @@ DRAFT ──fund──▶ FUNDED ──submit──▶ SUBMITTED ──approve�
 - Log with SLF4J, using structured key=value pairs. Never log secrets or full webhook bodies.
 - Every new SQL migration is a new Flyway file. Never edit an applied migration.
 - Integration tests use Testcontainers via `@ServiceConnection`. No H2 and no mocks for Postgres.
+- Every chaos scenario asserts its fault actually happened and its race actually raced. A scenario
+  that passes because the fault missed (no retries, no real kill, one side of a race always winning)
+  proves nothing, so it must fail, and record the evidence in its result JSON (`violations` makes
+  `run_all.py` report FAIL). Examples: C3 needs at least 20% of its calls to be retries; C6 needs
+  each outcome at least 10% of milestones; K2 needs at least 3 kills that exited 137.
 - Before any git commit, run git rev-parse --show-toplevel and confirm it is this project's folder. If not, stop.
 
 ## Commands

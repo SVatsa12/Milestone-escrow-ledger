@@ -197,13 +197,22 @@ class C3DBLatencyChaosIT extends AbstractChaosIT {
             failures.add("wallets hold " + total + " in total, expected " + FUNDED_PAISE * WALLETS);
         }
 
+        // The fault must actually have bitten: at least 20% of all HTTP calls were retries. Otherwise
+        // the toxics missed and "no transfer applied twice" proves nothing (FINDINGS #54).
+        int retries = totalAttempts - logicals.size();
+        if (retries * 5 < totalAttempts) {
+            failures.add("fault did not bite: only " + retries + " of " + totalAttempts
+                + " HTTP calls were retries (need at least 20%)");
+        }
+
         List<String> violations = new ArrayList<>(failures);
         violations.addAll(describe(invariantChecker.check()));
 
         Map<String, Object> notes = new LinkedHashMap<>();
         notes.put("logicalTransfers", logicals.size());
         notes.put("httpAttempts", totalAttempts);
-        notes.put("retries", totalAttempts - logicals.size());
+        notes.put("retries", retries);
+        notes.put("retryShare", Math.round(100.0 * retries / totalAttempts) / 100.0);
         notes.put("acked2xx", acked);
         notes.put("appliedWithoutAck", appliedWithoutAck);
         notes.put("notApplied", notApplied);

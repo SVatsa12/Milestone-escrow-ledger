@@ -101,6 +101,7 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
 
         // --- The storm ------------------------------------------------------------------------------
         Map<Integer, Integer> statuses = new ConcurrentHashMap<>();
+        Map<String, Integer> callStatus = new ConcurrentHashMap<>();   // "approve:<id>" / "dispute:<id>" -> status
         List<String> errors = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch go = new CountDownLatch(1);
         AtomicBoolean stormOver = new AtomicBoolean(false);
@@ -115,12 +116,20 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
                     return null;
                 }));
             }
-            List<Future<?>> calls = new ArrayList<>();
+            // Shuffled (fixed seed): submitting each milestone's approve before its dispute let approves
+            // reach the server first, a bias of the test, not of the system (FINDINGS #54).
+            List<java.util.concurrent.Callable<Void>> work = new ArrayList<>();
             for (long m : milestones) {
-                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/v1/milestones/" + m + "/approve",
-                    "c6-appr-" + m, actor(client, "CLIENT"), "")));
-                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/v1/disputes",
-                    "c6-disp-" + m, actor(freelancer, "FREELANCER"), "{\"milestoneId\":" + m + ",\"reason\":\"c6\"}")));
+                work.add(() -> call(api, go, statuses, callStatus, "approve:" + m, errors,
+                    "/api/v1/milestones/" + m + "/approve", "c6-appr-" + m, actor(client, "CLIENT"), ""));
+                work.add(() -> call(api, go, statuses, callStatus, "dispute:" + m, errors,
+                    "/api/v1/disputes", "c6-disp-" + m, actor(freelancer, "FREELANCER"),
+                    "{\"milestoneId\":" + m + ",\"reason\":\"c6\"}"));
+            }
+            Collections.shuffle(work, new java.util.Random(6006));
+            List<Future<?>> calls = new ArrayList<>();
+            for (var w : work) {
+                calls.add(pool.submit(w));
             }
             go.countDown();
             for (Future<?> f : calls) {
@@ -138,7 +147,7 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
         if (!java.util.Set.of(200, 201, 409).containsAll(statuses.keySet())) {
             failures.add("unexpected HTTP statuses: " + statuses);
         }
-        int released = 0, disputed = 0, autoReleased = 0;
+        int released = 0, disputed = 0, autoReleased = 0, approveLostToAuto = 0, disputeLostToAuto = 0;
         for (long m : milestones) {
             String state = milestoneRepository.findById(m).orElseThrow().state().name();
             long releases = entries(LedgerKeys.release(m));
@@ -149,8 +158,13 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
                     if (releases != 1 || freezes != 0) {
                         failures.add(m + " RELEASED with " + releases + " release / " + freezes + " freeze entries");
                     }
-                    autoReleased += jdbcClient.sql("SELECT count(*) FROM milestone_transitions WHERE milestone_id = ? "
+                    int bySystem = jdbcClient.sql("SELECT count(*) FROM milestone_transitions WHERE milestone_id = ? "
                         + "AND to_state = 'RELEASED' AND actor_role = 'SYSTEM'").param(m).query(Integer.class).single();
+                    autoReleased += bySystem;
+                    if (bySystem > 0) {
+                        approveLostToAuto += Integer.valueOf(409).equals(callStatus.get("approve:" + m)) ? 1 : 0;
+                        disputeLostToAuto += Integer.valueOf(409).equals(callStatus.get("dispute:" + m)) ? 1 : 0;
+                    }
                 }
                 case "DISPUTED" -> {
                     disputed++;
@@ -162,6 +176,20 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
             }
         }
 
+        // The race must actually have raced (FINDINGS #54). With a starved connection pool, auto-release
+        // once won 100 of 100 and this scenario still passed (#53). Each outcome must be at least 10%
+        // of the milestones, and both HTTP paths must have lost to auto-release at least once.
+        int approved = released - autoReleased;
+        int floor = milestones.size() / 10;
+        if (autoReleased < floor || approved < floor || disputed < floor) {
+            failures.add("race did not race: auto-released " + autoReleased + ", approved " + approved
+                + ", disputed " + disputed + " of " + milestones.size() + " (each must be at least " + floor + ")");
+        }
+        if (approveLostToAuto < 1 || disputeLostToAuto < 1) {
+            failures.add("race did not race: approves lost to auto-release with 409: " + approveLostToAuto
+                + ", disputes lost to auto-release with 409: " + disputeLostToAuto + " (each must be at least 1)");
+        }
+
         List<String> violations = new ArrayList<>(failures);
         violations.addAll(describe(invariantChecker.check()));
         List<String> mismatches = reconcileToday();
@@ -171,6 +199,9 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
         notes.put("milestones", milestones.size());
         notes.put("released", released);
         notes.put("releasedByAutoRelease", autoReleased);
+        notes.put("releasedByApprove", approved);
+        notes.put("approveLostToAutoRelease409", approveLostToAuto);
+        notes.put("disputeLostToAutoRelease409", disputeLostToAuto);
         notes.put("disputed", disputed);
         notes.put("httpStatuses", statuses);
         notes.put("boundary", clock.instant().toString());
@@ -183,12 +214,14 @@ class C6StateMachineRaceChaosIT extends AbstractChaosIT {
         assertThat(released + disputed).isEqualTo(milestones.size());
     }
 
-    private static Void call(ApiClient api, CountDownLatch go, Map<Integer, Integer> statuses, List<String> errors,
+    private static Void call(ApiClient api, CountDownLatch go, Map<Integer, Integer> statuses,
+                             Map<String, Integer> callStatus, String callId, List<String> errors,
                              String path, String key, String[] actor, String body) throws Exception {
         go.await();
         try {
             HttpResponse<String> r = api.post(path, key, actor, body);
             statuses.merge(r.statusCode(), 1, Integer::sum);
+            callStatus.put(callId, r.statusCode());
             if (r.statusCode() == 409 && !r.body().contains("INVALID_STATE_TRANSITION")) {
                 errors.add(path + " 409 without INVALID_STATE_TRANSITION: " + r.body());
             }

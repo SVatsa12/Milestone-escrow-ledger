@@ -748,6 +748,30 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
 - **Lesson:** a passing chaos scenario can still have stopped exercising its fault. C6 records who
   won, and that note is what showed it.
 
+### 54. A chaos scenario could pass without its fault happening: now it can't
+- **Gap:** #53 showed a starved C6 passing while auto-release won all 100 milestones. Nothing
+  required the race to race. C3 only required more HTTP attempts than transfers (one retry was
+  enough), and outside the result JSON. K2 required 3 kills but counted a kill that didn't exit 137.
+- **Fix:** each scenario now fails, in its result JSON (so `run_all.py` says FAIL) as well as in
+  JUnit, when its fault didn't bite:
+  - **C6:**
+    - auto-released, approved and disputed must each be at least 10% of the milestones;
+    - at least one approve and one dispute must have got 409 on a milestone that auto-release won.
+    The notes record per-call outcomes (`releasedByApprove`, `approveLostToAutoRelease409`,
+    `disputeLostToAutoRelease409`).
+  - **C3:** at least 20% of HTTP calls must be retries (`retryShare` in the notes).
+  - **K2:** at least 3 kills with exit code 137 (`realKills`).
+  - **AGENTS.md** gains the rule "Every chaos scenario asserts its fault actually happened and its
+    race actually raced."
+- **Also found:** C6 submitted each milestone's approve call before its dispute call, so with 48
+  threads approves reached the server first and disputes were always the smallest outcome: 12–19
+  of 100 over five runs, once 7, which would fail the 10% floor. That was a bias of the test, not
+  the system. The 200 calls are now shuffled (fixed seed 6006); over five runs the smallest outcome
+  was 17, with disputes at 17–35.
+- **Proof the check bites:** C6 with the chaos pool forced back to 5 now FAILS with "race did not
+  race: auto-released 100, approved 0, disputed 0 of 100 (each must be at least 10)". The same
+  setup passed before this change.
+
 ### 55. The relay's leader lock pinned virtual threads and froze the app after a kill -9 (found by chaos K2)
 - **Symptom:** in the run checking #54, K2's first restart after `docker kill -s KILL` logged
   "Started EscrowServiceApplication in 5.7 s" and then never answered `/actuator/health`. The

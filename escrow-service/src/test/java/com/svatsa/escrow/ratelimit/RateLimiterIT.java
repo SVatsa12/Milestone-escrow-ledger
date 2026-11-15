@@ -34,7 +34,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * a correct 400, and then expected 200). Each test uses a fresh actor id, so tests don't share
  * a window.
  */
-@TestPropertySource(properties = "escrow.ratelimit.enabled=true") // the base turns it off for everyone else
+// Rate limiting on (the base turns it off for everyone else), which makes this the one test class with
+// its own Spring context. That context must not run a second OutboxRelay: the relay is only correct
+// as a single instance (its claim transaction ends before it sends, FINDINGS #51), and two relays in
+// one test JVM reordered an aggregate's events in CI. The base context's relay publishes this
+// class's rows.
+@TestPropertySource(properties = {"escrow.ratelimit.enabled=true", "escrow.outbox.relay.enabled=false"})
 @DisplayName("Rate limiter")
 class RateLimiterIT extends AbstractIntegrationTest {
 
@@ -45,6 +50,13 @@ class RateLimiterIT extends AbstractIntegrationTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private LedgerService ledgerService;
     @Autowired private TransactionTemplate tx;
+    @Autowired private org.springframework.context.ApplicationContext context;
+
+    @Test
+    @DisplayName("this extra test context runs no second outbox relay (one relay per JVM keeps per-aggregate order)")
+    void noSecondOutboxRelay() {
+        assertThat(context.getBeansOfType(com.svatsa.escrow.outbox.OutboxRelay.class)).isEmpty();
+    }
 
     private String actor;
     private Account from;

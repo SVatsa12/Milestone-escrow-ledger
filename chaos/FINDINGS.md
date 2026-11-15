@@ -678,6 +678,30 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   parallelogram syntax and dropped the leading slash, so the node read "webhooks/razorpay". It is
   now the quoted label `"POST /webhooks/razorpay"`.
 
+### 51. CI: two outbox relays in one test JVM reordered an aggregate's events
+- **Symptom:** CI run 43750291521 (51e6c4e) failed
+  `ConsumersKafkaIT.lifecycleProducesTheExpectedAuditSequence`. For one milestone, `audit_log`
+  read `[MilestoneApproved, MilestoneSubmitted, MilestoneReleased]` against outbox order
+  `[Submitted, Approved, Released]`. The relay logged no send failures, so this was not #42's
+  failure path. Locally all five verifies of the same code passed.
+- **Root cause:** each Spring test context runs its own scheduled `OutboxRelay`. RateLimiterIT is
+  the one class with a second context, and in CI's (Linux filesystem) class order it ran before
+  ConsumersKafkaIT, so two relays were polling the same outbox. Locally, classes run in
+  alphabetical order, and ConsumersKafkaIT comes first. Two relays can reorder an aggregate's
+  events because of the open issue below: relay A's claim transaction locks Submitted, relay B's
+  `FOR UPDATE SKIP LOCKED` skips it and claims Approved, and B sends Approved before A sends
+  Submitted. The relay is documented as single-instance; the test setup broke that assumption.
+- **Fix:** RateLimiterIT's context runs with `escrow.outbox.relay.enabled=false`, so a test JVM has
+  exactly one relay (the base context's), as a deployment does. Fewer contexts (A3) made the
+  window smaller but never closed it; before that there were up to four relays.
+- **Regression:** `RateLimiterIT.noSecondOutboxRelay` (that context has no `OutboxRelay` bean).
+  RateLimiterIT then ConsumersKafkaIT, in CI's order (`-Dfailsafe.runOrder=reversealphabetical`),
+  passed. The race is timing-dependent, so one passing run doesn't prove it on its own; the
+  single-relay setup does.
+- **Still open (below):** in production, more than one relay instance can reorder an aggregate's
+  events. The proper fix holds the claim through the send and takes a per-aggregate lock, so a
+  second relay can't take a later event of an aggregate whose earlier event is in flight.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried
@@ -686,6 +710,7 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   its own transaction and commits before the sends, so two relay instances could claim the same
   rows: duplicates (deduped by consumers) and per-aggregate reordering. Safe with today's single
   instance per deployment; not with several.
+  #51 is this race, seen in CI when two test contexts each ran a relay.
 ## Scenario notes
 - **C2:** RANDOM provider plus flapping `reset_peer` toxics (upstream, timeout 0: request lost;
   downstream, timeout 50ms against a 150ms provider: provider paid, response lost). The first

@@ -33,10 +33,16 @@ import static org.awaitility.Awaitility.await;
  * Pass: the API never fails (every operation answered its success status); the outbox backs up
  * during the outage and fully drains after it; audit_log has exactly ONE row per outbox eventId of
  * the scenario, none missing (the relay re-sends what timed out, so Kafka sees duplicates and the
- * consumer must dedupe); InvariantChecker clean; reconciliation of the day at 0 mismatches.
+ * consumer must dedupe), and every aggregate's audit rows are in outbox order; the same relay
+ * instance holds the leader lock before, during and after the outage (leadership lives in Postgres,
+ * so a Kafka outage must not move it); InvariantChecker clean; reconciliation of the day at 0
+ * mismatches. Recorded: backlog peak, drain time after Kafka returns, the leader before and after.
  */
 @DisplayName("C5: Kafka outage")
 class C5KafkaOutageChaosIT extends AbstractChaosIT {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.svatsa.escrow.outbox.OutboxRelay relay;
 
     private static final Logger log = LoggerFactory.getLogger(C5KafkaOutageChaosIT.class);
 
@@ -59,21 +65,26 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
         api.expect(api.post("/api/v1/admin/deposits/simulate", "c5-dep-" + run, ApiClient.admin(),
             "{\"clientAccountId\":" + wallet + ",\"amountPaise\":10000000}"), 201);
         long firstOutboxId = jdbcClient.sql("SELECT COALESCE(max(id), 0) FROM outbox").query(Long.class).single();
+        String pendingSql = "SELECT count(*) FROM outbox WHERE id > ? AND published_at IS NULL";
 
         // --- The outage, on its own thread ---------------------------------------------------------
         AtomicBoolean paused = new AtomicBoolean(false);
         AtomicLong maxPendingDuringOutage = new AtomicLong();
+        AtomicLong drainMs = new AtomicLong(-1);
+        Map<String, Object> leaderBefore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.Set<String> leadersDuringOutage = new java.util.concurrent.ConcurrentSkipListSet<>();
         Thread outage = Thread.ofPlatform().name("c5-outage").start(() -> {
             try {
                 Thread.sleep(OUTAGE_START_MS);
+                leaderBefore.putAll(leader());
                 pauseKafka();
                 paused.set(true);
-                log.warn("c5.kafka-paused for={}ms", OUTAGE_MS);
+                log.warn("c5.kafka-paused for={}ms leader={}", OUTAGE_MS, leaderBefore);
                 long end = System.currentTimeMillis() + OUTAGE_MS;
                 while (System.currentTimeMillis() < end) {
-                    long pending = jdbcClient.sql("SELECT count(*) FROM outbox WHERE id > ? AND published_at IS NULL")
-                        .param(firstOutboxId).query(Long.class).single();
+                    long pending = jdbcClient.sql(pendingSql).param(firstOutboxId).query(Long.class).single();
                     maxPendingDuringOutage.accumulateAndGet(pending, Math::max);
+                    leadersDuringOutage.add(String.valueOf(leader()));
                     Thread.sleep(1_000);
                 }
             } catch (InterruptedException e) {
@@ -81,7 +92,23 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
             } finally {
                 if (paused.get()) {
                     unpauseKafka();
+                    long unpausedAt = System.nanoTime();
                     log.warn("c5.kafka-unpaused");
+                    // Drain time: Kafka back -> the scenario's backlog first reaches zero. Operations
+                    // keep arriving meanwhile, so this is "caught up", not "nothing left forever".
+                    long deadline = unpausedAt + Duration.ofMinutes(3).toNanos();
+                    while (System.nanoTime() < deadline) {
+                        if (jdbcClient.sql(pendingSql).param(firstOutboxId).query(Long.class).single() == 0) {
+                            drainMs.set((System.nanoTime() - unpausedAt) / 1_000_000);
+                            break;
+                        }
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -142,6 +169,39 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
             failures.add("audit_log has duplicate rows for events: " + duplicated);
         }
         long events = jdbcClient.sql("SELECT count(*) FROM outbox WHERE id > ?").param(firstOutboxId).query(Long.class).single();
+        // Per-aggregate order: each aggregate's audit rows (first delivery, deduped) in outbox order.
+        List<String> outOfOrder = jdbcClient.sql("""
+                WITH o AS (
+                    SELECT event_id, aggregate_type, aggregate_id,
+                           row_number() OVER (PARTITION BY aggregate_type, aggregate_id ORDER BY id) AS rn
+                    FROM outbox WHERE id > ?),
+                a AS (
+                    SELECT a.event_id,
+                           row_number() OVER (PARTITION BY o.aggregate_type, o.aggregate_id ORDER BY a.id) AS rn
+                    FROM audit_log a JOIN o ON o.event_id = a.event_id)
+                SELECT DISTINCT o.aggregate_type || ':' || o.aggregate_id
+                FROM o JOIN a ON a.event_id = o.event_id
+                WHERE o.rn <> a.rn
+                """).param(firstOutboxId).query(String.class).list();
+        if (!outOfOrder.isEmpty()) {
+            failures.add("audit_log order differs from outbox order for aggregates: " + outOfOrder);
+        }
+        long aggregates = jdbcClient.sql("SELECT count(DISTINCT (aggregate_type, aggregate_id)) FROM outbox WHERE id > ?")
+            .param(firstOutboxId).query(Long.class).single();
+        // Leadership lives in Postgres: a Kafka outage must not move it.
+        Map<String, Object> leaderAfter = leader();
+        if (leaderBefore.isEmpty() || !Boolean.TRUE.equals(leaderBefore.get("thisRelayLeads"))) {
+            failures.add("this JVM's relay did not hold the leader lock before the outage: " + leaderBefore);
+        }
+        if (!new java.util.TreeMap<>(leaderBefore).equals(new java.util.TreeMap<>(leaderAfter))) {
+            failures.add("leadership moved across a Kafka outage: before=" + leaderBefore + " after=" + leaderAfter);
+        }
+        if (leadersDuringOutage.size() != 1) {
+            failures.add("leadership changed during the outage: " + leadersDuringOutage);
+        }
+        if (drainMs.get() < 0) {
+            failures.add("backlog never reached zero within 3 minutes of Kafka returning");
+        }
         if (maxPendingDuringOutage.get() == 0) {
             failures.add("nothing backed up in the outbox during the outage: the fault didn't bite");
         }
@@ -159,6 +219,12 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
         notes.put("operationsDuringOutage", duringOutage);
         notes.put("kafkaPausedMs", OUTAGE_MS);
         notes.put("maxOutboxPendingDuringOutage", maxPendingDuringOutage.get());
+        notes.put("drainMsAfterKafkaReturned", drainMs.get());
+        notes.put("leaderBeforeOutage", new java.util.TreeMap<>(leaderBefore));
+        notes.put("leadersSeenDuringOutage", leadersDuringOutage.size());
+        notes.put("leaderAfterDrain", new java.util.TreeMap<>(leaderAfter));
+        notes.put("aggregates", aggregates);
+        notes.put("aggregatesOutOfOrder", outOfOrder.size());
         notes.put("outboxEvents", events);
         notes.put("auditMissing", missing);
         notes.put("auditDuplicates", duplicated.size());
@@ -169,6 +235,20 @@ class C5KafkaOutageChaosIT extends AbstractChaosIT {
         assertThat(violations).as("C5 violations").isEmpty();
         assertThat(mismatches).as("C5 reconciliation mismatches").isEmpty();
         assertThat(ok).as("the API never failed").isEqualTo(operations);
+    }
+
+    /** Who holds the relay's advisory lock: this JVM's relay instance, and the backend pid holding it. */
+    private Map<String, Object> leader() {
+        long key = com.svatsa.escrow.outbox.OutboxRelayLeadership.LOCK_KEY;
+        long pid = jdbcClient.sql("""
+                SELECT COALESCE(max(pid), 0) FROM pg_locks
+                WHERE locktype = 'advisory' AND granted AND objsubid = 1 AND classid::bigint = ? AND objid::bigint = ?
+                """).param(key >>> 32).param(key & 0xFFFFFFFFL).query(Long.class).single();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("instance", relay.instanceName());
+        m.put("thisRelayLeads", relay.isLeader());
+        m.put("lockHolderPid", pid);
+        return m;
     }
 
     private static HttpResponse<String> op(HttpResponse<String> r) throws InterruptedException {

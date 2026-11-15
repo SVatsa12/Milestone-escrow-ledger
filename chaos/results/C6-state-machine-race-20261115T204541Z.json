@@ -1,0 +1,23 @@
+{
+  "scenario" : "C6-state-machine-race",
+  "startedAt" : "2026-11-15T20:45:41.125119800Z",
+  "durationMs" : 2414,
+  "operations" : 200,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "milestones" : 100,
+    "released" : 79,
+    "releasedByAutoRelease" : 38,
+    "disputed" : 21,
+    "httpStatuses" : {
+      "200" : 41,
+      "409" : 138,
+      "201" : 21
+    },
+    "boundary" : "2026-11-15T21:45:43.483373200Z"
+  }
+}

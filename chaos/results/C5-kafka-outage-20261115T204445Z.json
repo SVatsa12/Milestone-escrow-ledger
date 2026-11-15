@@ -1,0 +1,35 @@
+{
+  "scenario" : "C5-kafka-outage",
+  "startedAt" : "2026-11-15T20:44:45.674835500Z",
+  "durationMs" : 55360,
+  "operations" : 200,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "operations" : 200,
+    "succeeded" : 200,
+    "operationsDuringOutage" : 163,
+    "kafkaPausedMs" : 30000,
+    "maxOutboxPendingDuringOutage" : 165,
+    "drainMsAfterKafkaReturned" : 206,
+    "leaderBeforeOutage" : {
+      "instance" : "relay-a82668ea",
+      "lockHolderPid" : 268,
+      "thisRelayLeads" : true
+    },
+    "leadersSeenDuringOutage" : 1,
+    "leaderAfterDrain" : {
+      "instance" : "relay-a82668ea",
+      "lockHolderPid" : 268,
+      "thisRelayLeads" : true
+    },
+    "aggregates" : 200,
+    "aggregatesOutOfOrder" : 0,
+    "outboxEvents" : 300,
+    "auditMissing" : 0,
+    "auditDuplicates" : 0
+  }
+}

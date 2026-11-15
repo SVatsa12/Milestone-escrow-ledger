@@ -116,6 +116,11 @@ public class OutboxRelay {
         return leadership.isLeader();
     }
 
+    /** This instance's name, as the leadership log lines print it. */
+    public String instanceName() {
+        return leadership.instance();
+    }
+
     /** Step down: release the advisory lock so another instance can lead at once (shutdown, tests). */
     @jakarta.annotation.PreDestroy
     public void stepDown() {

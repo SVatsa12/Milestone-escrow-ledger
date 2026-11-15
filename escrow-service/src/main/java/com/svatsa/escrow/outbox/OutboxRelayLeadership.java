@@ -52,6 +52,11 @@ public class OutboxRelayLeadership implements AutoCloseable {
         return leader;
     }
 
+    /** This instance's name in the leadership log lines. */
+    public String instance() {
+        return instance;
+    }
+
     /**
      * Called before each batch: true if this instance leads now (still, or newly). Never throws: a
      * database error just means "not the leader this tick".

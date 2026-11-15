@@ -7,3 +7,7 @@ Microsoft Windows 11 Home Single Language
 docker: 16 CPUs, 8164069376 bytes, server 28.4.0
 limits: escrow-service cpus=2 mem=1g; postgres cpus=2 (docker stats CPU% is per core: 200% = the cap)
 k6: grafana/k6:0.54.0 on the same host, unlimited
+power: on AC for the whole benchmark (runs 2026-11-14T19:50Z-22:12Z = 01:20-03:42 IST); no standby in that window.
+       Source, read afterwards from the Windows System event log (bench.py did not record it):
+       Kernel-Power 105 AcOnline=true at 01:06:29 IST, next change (AcOnline=false) 06:53:54 IST;
+       Modern Standby exit 01:11:50, next entry 03:49:41 IST. Power plan now: Balanced (not recorded at benchmark time).

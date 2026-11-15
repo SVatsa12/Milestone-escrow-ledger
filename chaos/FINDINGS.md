@@ -669,6 +669,15 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
     fails naming exactly what is missing;
   - the prod cases are unchanged.
 
+### 50. README Mermaid diagrams: validated by rendering
+- **Check:** each of the README's 3 Mermaid blocks (architecture flowchart, milestone
+  `stateDiagram-v2`, payout saga `sequenceDiagram`) was rendered to SVG with
+  `npx @mermaid-js/mermaid-cli@11.4.2` (`mmdc`). All 3 rendered with exit 0 and no
+  "Syntax error in text" output. They were also viewed as PNGs. The SVGs are not committed.
+- **Fixed:** no syntax errors. One label was wrong: `wh[/webhooks/razorpay/]` is Mermaid's
+  parallelogram syntax and dropped the leading slash, so the node read "webhooks/razorpay". It is
+  now the quoted label `"POST /webhooks/razorpay"`.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

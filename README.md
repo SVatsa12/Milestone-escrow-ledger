@@ -31,7 +31,7 @@ jqwik, Toxiproxy and k6.
 ```mermaid
 flowchart LR
     client([Client / Freelancer / Admin]) -->|X-Actor-Id, X-Actor-Role,<br/>Idempotency-Key| api[REST API<br/>/api/v1]
-    rzp([Razorpay]) -->|HMAC-signed webhook| wh[/webhooks/razorpay/]
+    rzp([Razorpay]) -->|HMAC-signed webhook| wh["POST /webhooks/razorpay"]
     api --> rl[(Redis<br/>rate limit)]
     api --> svc[EscrowService · DisputeService<br/>LedgerService · PayoutService]
     wh --> svc

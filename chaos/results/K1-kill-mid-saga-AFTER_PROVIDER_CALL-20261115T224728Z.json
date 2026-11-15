@@ -1,0 +1,32 @@
+{
+  "scenario": "K1-kill-mid-saga-AFTER_PROVIDER_CALL",
+  "startedAt": "2026-11-15T22:47:28.734507+00:00",
+  "durationMs": 60280,
+  "operations": 1,
+  "violations": 0,
+  "violationDetails": [],
+  "mismatches": 0,
+  "mismatchDetails": [],
+  "result": "PASS",
+  "notes": {
+    "crashPoint": "AFTER_PROVIDER_CALL",
+    "clientSaw": "RemoteDisconnected",
+    "containerExitCode": 137,
+    "payoutId": "6ed5be39-897b-4c73-836d-f6a05909ce81",
+    "stateAtCrash": "RESERVED",
+    "providerAtCrash": {
+      "id": "1d5c29e7-0a6d-432d-a029-c48ff00a087e",
+      "idempotencyKey": "6ed5be39-897b-4c73-836d-f6a05909ce81",
+      "beneficiary": "freelancer-2",
+      "amountPaise": 5000,
+      "status": "SUCCESS",
+      "failureReason": null,
+      "createdAt": "2026-11-15T22:47:46.283778Z",
+      "settledAt": "2026-11-15T22:47:46.283778Z"
+    },
+    "recoverySeconds": 39,
+    "finalState": "CONFIRMED",
+    "providerFinal": "SUCCESS",
+    "journalEntries": "PAYOUT_RESERVE,PAYOUT_CONFIRM"
+  }
+}

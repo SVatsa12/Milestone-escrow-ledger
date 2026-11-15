@@ -12,7 +12,7 @@ while a dispute is open. All of it runs on a double-entry ledger that always sum
 > **Highlights**
 > - **250 req/s sustained** transfers at **p99 28 ms**, 0 errors, 0 dropped, 3 of 3 runs ([REPORT](load/results/v2/REPORT.md))
 > - **Saturates around 480 req/s**, where **Postgres is the bottleneck**: 192% of its 2-vCPU cap vs 127% for the app ([REPORT](load/results/v2/REPORT.md))
-> - **9 chaos scenarios × 3 consecutive runs**, plus a fourth with the advisory-lock relay: 0 invariant violations, 0 reconciliation mismatches ([chaos/results](chaos/results))
+> - **9 chaos scenarios × 3 consecutive runs**, plus full re-runs since, the latest on JDK 21 (includes #54 race assertions and #55 fix): 0 invariant violations, 0 reconciliation mismatches ([chaos/results](chaos/results))
 > - **10,000-operation property test** checks the ledger against an in-memory model ([LedgerPropertyIT](escrow-service/src/test/java/com/svatsa/escrow/ledger/LedgerPropertyIT.java))
 > - **43 real bugs found by testing**, each with root cause, fix and regression test ([FINDINGS.md](chaos/FINDINGS.md), 45 entries; #43 and #44 were bugs in the tests themselves)
 
@@ -301,24 +301,24 @@ whole benchmark, read afterwards from the Windows event log. Rate limiting is of
 
 `python chaos/run_all.py` runs all 9 scenarios and prints
 `scenario | operations | violations | mismatches | result`. Each scenario ends by checking every
-invariant and reconciling its day against both the payout provider and Razorpay. It passed **3 times
-in a row** with 0 violations and 0 mismatches, and again in full after the outbox relay gained its
-advisory-lock leader. The table shows that latest run: uninterrupted (no standby, on AC power), with
-the **advisory-lock relay**, and with chaos contexts on production's connection pool
-([FINDINGS #53](chaos/FINDINGS.md): with the unit suite's pool of 5, C6's race had collapsed to
-auto-release winning everything).
+invariant and reconciling its day against both the payout provider and Razorpay, and fails if its
+fault didn't happen or its race didn't race. It passed **3 times in a row** with 0 violations and 0
+mismatches, and again in full on every change since. The table shows the latest run: on **JDK 21**
+(the runtime's JDK), uninterrupted (no standby), with the advisory-lock relay. It **includes #54
+race assertions and #55 fix** ([FINDINGS](chaos/FINDINGS.md): every scenario asserts its fault
+happened; the relay's leader lock no longer pins virtual threads).
 
 | scenario | injected fault | what could go wrong without the design | result |
 |---|---|---|---|
-| [C1](chaos/results/C1-provider-latency-20261115T204020Z.json) provider latency | 3 s Toxiproxy latency against a 2 s read timeout, 100 payouts | blind retries pay twice | all 100 UNKNOWN; recovery confirms each with one provider POST · **0 / 0 PASS** |
-| [C2](chaos/results/C2-provider-connection-reset-20261115T204033Z.json) connection reset | flapping `reset_peer` both ways; provider in a random mode | provider paid, response lost: money out with no ledger record | provider paid 64,330 paise = ledger confirmed 64,330 · **0 / 0 PASS** |
-| [C3](chaos/results/C3-db-latency-and-drops-20261115T204038Z.json) DB latency and drops | 300 ± 100 ms Postgres latency, 27 connection-drop windows; client retries with the same key | a retried transfer applied twice | 337 HTTP attempts for 100 transfers; none applied twice, none applied without an ack · **0 / 0 PASS** |
-| [C4](chaos/results/C4-duplicate-webhooks-20261115T204444Z.json) webhook storm | 20 payments × (25 `payment.captured` + 5 `order.paid`), 600 shuffled deliveries from 32 threads | a wallet credited 25 times | 600 × 200 OK, each wallet credited once · **0 / 0 PASS** |
-| [C5](chaos/results/C5-kafka-outage-20261115T204445Z.json) Kafka outage | broker paused for 30 s during 200 escrow operations | events lost or reordered, operations blocked on Kafka, leadership lost | all 200 succeeded (163 during the outage); outbox peaked at 165 pending and caught up 206 ms after Kafka returned; one relay (`relay-a82668ea`) led throughout; one audit row per event, all 200 aggregates in outbox order · **0 / 0 PASS** |
-| [C6](chaos/results/C6-state-machine-race-20261115T204541Z.json) state race | approve vs dispute vs 4 auto-release threads on 100 milestones at the exact review-window boundary | released and disputed, or released twice | 38 auto-released, 41 approved, 21 disputed; exactly one entry each · **0 / 0 PASS** |
-| [K1](chaos/results/K1-kill-mid-saga-AFTER_RESERVE-20261115T204618Z.json) kill after reserve | JVM halted with exit 137 after T1 commits | reserved money stuck, or the payout lost | restart, recovery tombstones the key: CANCELLED, money back · **0 / 0 PASS** |
-| [K1](chaos/results/K1-kill-mid-saga-AFTER_PROVIDER_CALL-20261115T204847Z.json) kill after provider call | JVM halted with exit 137 after the provider paid | provider paid, ledger never knows | recovery finds SUCCESS at the provider: CONFIRMED in 40 s · **0 / 0 PASS** |
-| [K2](chaos/results/K2-kill-under-load-20261115T204956Z.json) kill under load | `docker kill -s KILL` every 15 s of uptime under `mixed.js` for 2 min (4 kills, all exit 137; each restart takes the relay lock back) | an acknowledged request lost or applied twice | 3,574 acknowledged operations, each with exactly one journal entry · **0 / 0 PASS** |
+| [C1](chaos/results/C1-provider-latency-20261115T223818Z.json) provider latency | 3 s Toxiproxy latency against a 2 s read timeout, 100 payouts | blind retries pay twice | all 100 UNKNOWN; recovery confirms each with one provider POST · **0 / 0 PASS** |
+| [C2](chaos/results/C2-provider-connection-reset-20261115T223833Z.json) connection reset | flapping `reset_peer` both ways; provider in a random mode | provider paid, response lost: money out with no ledger record | provider paid 54,692 paise = ledger confirmed 54,692 · **0 / 0 PASS** |
+| [C3](chaos/results/C3-db-latency-and-drops-20261115T223839Z.json) DB latency and drops | 300 ± 100 ms Postgres latency, 29 connection-drop windows; client retries with the same key | a retried transfer applied twice | 350 HTTP attempts for 100 transfers (71% retries, floor 20%); none applied twice, none applied without an ack · **0 / 0 PASS** |
+| [C4](chaos/results/C4-duplicate-webhooks-20261115T224302Z.json) webhook storm | 20 payments × (25 `payment.captured` + 5 `order.paid`), 600 shuffled deliveries from 32 threads | a wallet credited 25 times | 600 × 200 OK, each wallet credited once · **0 / 0 PASS** |
+| [C5](chaos/results/C5-kafka-outage-20261115T224303Z.json) Kafka outage | broker paused for 30 s during 200 escrow operations | events lost or reordered, operations blocked on Kafka, leadership lost | all 200 succeeded (165 during the outage); outbox peaked at 156 pending and caught up 114 ms after Kafka returned; one relay (`relay-3d39f760`) led throughout; one audit row per event, all 200 aggregates in outbox order · **0 / 0 PASS** |
+| [C6](chaos/results/C6-state-machine-race-20261115T224402Z.json) state race | approve vs dispute vs 4 auto-release threads on 100 milestones at the exact review-window boundary | released and disputed, or released twice | 31 auto-released, 37 approved, 32 disputed (floor 10 each); 31 approves and 31 disputes lost to auto-release with 409; exactly one entry each · **0 / 0 PASS** |
+| [K1](chaos/results/K1-kill-mid-saga-AFTER_RESERVE-20261115T224457Z.json) kill after reserve | JVM halted with exit 137 after T1 commits | reserved money stuck, or the payout lost | restart, recovery tombstones the key: CANCELLED, money back · **0 / 0 PASS** |
+| [K1](chaos/results/K1-kill-mid-saga-AFTER_PROVIDER_CALL-20261115T224728Z.json) kill after provider call | JVM halted with exit 137 after the provider paid | provider paid, ledger never knows | recovery finds SUCCESS at the provider: CONFIRMED in 39 s · **0 / 0 PASS** |
+| [K2](chaos/results/K2-kill-under-load-20261115T224835Z.json) kill under load | `docker kill -s KILL` every 15 s of uptime under `mixed.js` for 2 min (4 real kills, all exit 137, floor 3; each restart takes the relay lock back) | an acknowledged request lost or applied twice | 3,565 acknowledged operations, each with exactly one journal entry · **0 / 0 PASS** |
 
 How each fault is injected and verified: [chaos/FINDINGS.md](chaos/FINDINGS.md) (scenario notes, #44).
 
@@ -410,21 +410,22 @@ python load/bench.py           # benchmarks, 3 runs each (about 3.5 hours); see 
 ## Done when
 
 - [x] **Zero invariant violations across all chaos runs.** 9 scenarios × 3 consecutive runs, plus
-  a fourth full run with the advisory-lock relay, 0 violations and 0 reconciliation mismatches in
-  every run: [chaos/results](chaos/results) (36 result files, `"violations": 0, "mismatches": 0`).
+  full re-runs with the advisory-lock relay, the latest on JDK 21 (includes #54 race assertions and
+  #55 fix), 0 violations and 0 reconciliation mismatches in every run:
+  [chaos/results](chaos/results) (45 result files, `"violations": 0, "mismatches": 0`).
 - [x] **The same request sent twice never moves money twice.**
   [ledger/ConcurrencyIT](escrow-service/src/test/java/com/svatsa/escrow/ledger/ConcurrencyIT.java)
   (50 simultaneous identical requests, 1 entry),
   [LedgerIdempotencyKeyIT](escrow-service/src/test/java/com/svatsa/escrow/ledger/LedgerIdempotencyKeyIT.java)
-  (every flow, even with a new HTTP key), chaos [C3](chaos/results/C3-db-latency-and-drops-20261115T204038Z.json),
-  [C4](chaos/results/C4-duplicate-webhooks-20261115T204444Z.json) and
-  [K2](chaos/results/K2-kill-under-load-20261115T204956Z.json), replays benchmark (100% honoured,
+  (every flow, even with a new HTTP key), chaos [C3](chaos/results/C3-db-latency-and-drops-20261115T223839Z.json),
+  [C4](chaos/results/C4-duplicate-webhooks-20261115T224302Z.json) and
+  [K2](chaos/results/K2-kill-under-load-20261115T224835Z.json), replays benchmark (100% honoured,
   [REPORT](load/results/v2/REPORT.md)).
 - [x] **Disputes freeze funds, and auto-release works.**
   [DisputeIT](escrow-service/src/test/java/com/svatsa/escrow/dispute/DisputeIT.java),
   [AutoReleaseIT](escrow-service/src/test/java/com/svatsa/escrow/escrow/AutoReleaseIT.java), and chaos
-  [C6](chaos/results/C6-state-machine-race-20261115T204541Z.json) (38 auto-releases, 41 approvals
-  and 21 disputes racing at the boundary, with DISPUTE_HOLD conservation checked by I6).
+  [C6](chaos/results/C6-state-machine-race-20261115T224402Z.json) (31 auto-releases, 37 approvals
+  and 32 disputes racing at the boundary, each at least 10%, with DISPUTE_HOLD conservation checked by I6).
 - [x] **README has a benchmark table and failure write-ups.** [Benchmarks](#benchmarks),
   [Chaos testing](#chaos-testing), [Bugs found by testing](#bugs-found-by-testing).
 

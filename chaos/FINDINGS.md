@@ -834,6 +834,9 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
   `synchronized\s*\(` outside comments, strings, text blocks and char literals. It found none, so
   there was nothing to fix or justify. `sourceScanFindsBlocksOnly` proves the scanner finds real
   blocks and ignores the comment and string forms.
+- **Evidence note:** the chaos run that first carried the #54 checks and the #55 fix (on JDK 24) was
+  not kept; its result files were deleted before they were committed. The committed replacement is a
+  fresh full `run_all.py` on JDK 21 with both in place.
 
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but

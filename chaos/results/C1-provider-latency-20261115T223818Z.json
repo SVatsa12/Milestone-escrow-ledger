@@ -1,0 +1,16 @@
+{
+  "scenario" : "C1-provider-latency",
+  "startedAt" : "2026-11-15T22:38:18.234747Z",
+  "durationMs" : 14573,
+  "operations" : 100,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "payouts" : 100,
+    "latencyToxicMs" : 3000,
+    "providerSettledPaise" : 1000000
+  }
+}

@@ -10,6 +10,7 @@ import eu.rekawek.toxiproxy.model.Toxic;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -59,16 +60,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  * every integration test written against it from P3 on was @Disabled.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// Everything a test class could vary lives here, so (nearly) every integration test shares ONE cached
+// Spring context. MockMvc and the webhook secret used to be per-class additions (TransferApiIT,
+// DepositWebhookIT, C4), and each variation booted another context with its own Hikari pool.
+@AutoConfigureMockMvc
 @Import(AbstractIntegrationTest.TestClockConfig.class)
 @TestPropertySource(properties = {
     // Defaults a test class can override with its own @TestPropertySource.
-    "escrow.ratelimit.enabled=false",          // RateLimiterIT turns it on
+    "escrow.ratelimit.enabled=false",          // RateLimiterIT turns it on (the one extra context)
+    "razorpay.webhook-secret=" + AbstractIntegrationTest.WEBHOOK_SECRET,
+    // Small pools: cached contexts keep their pools open, and Postgres runs with its default
+    // max_connections (100). A class may raise it with its own @TestPropertySource.
+    "spring.datasource.hikari.maximum-pool-size=5",
     // The job bean only exists when enabled; keep it, but tests drive AutoReleaseJob.runOnce() themselves.
     "escrow.auto-release.enabled=true",
     "escrow.auto-release.poll-interval=3600000",
     "payouts.recovery.poll-interval=3600000",  // tests drive PayoutRecoveryJob.runOnce() themselves
 })
 public abstract class AbstractIntegrationTest {
+
+    /** The Razorpay webhook secret every test context runs with; sign test webhooks with it. */
+    public static final String WEBHOOK_SECRET = "test-webhook-secret";
 
     private static final int PG_PROXY_PORT = 8666;
     private static final int PROVIDER_PROXY_PORT = 8667;
@@ -89,9 +101,6 @@ public abstract class AbstractIntegrationTest {
         .withDatabaseName("escrow")
         .withUsername("escrow")
         .withPassword("escrow")
-        // Every cached Spring test context keeps a 30-connection Hikari pool open (min idle = max),
-        // and the in-process payout provider has its own: the default 100 ran out.
-        .withCommand("postgres", "-c", "max_connections=300")
         .withStartupAttempts(STARTUP_ATTEMPTS)
         .withStartupTimeout(STARTUP_TIMEOUT);
 
@@ -146,7 +155,6 @@ public abstract class AbstractIntegrationTest {
         registry.add("spring.datasource.username", () -> "escrow");
         registry.add("spring.datasource.password", () -> "escrow");
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "30");
         registry.add("spring.datasource.hikari.connection-timeout", () -> "10000");
         registry.add("spring.flyway.enabled", () -> "true");
 

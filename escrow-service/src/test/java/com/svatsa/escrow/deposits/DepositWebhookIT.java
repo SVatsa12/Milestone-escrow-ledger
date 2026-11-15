@@ -9,7 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.TestPropertySource;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -32,11 +31,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Every test checks the money, not just the HTTP status: the old version only checked
  * webhook_events rows, which is how "no capture ever credited a wallet" went unnoticed.
  */
-@TestPropertySource(properties = "razorpay.webhook-secret=" + DepositWebhookIT.SECRET)
 @DisplayName("Razorpay webhooks (P9)")
 class DepositWebhookIT extends AbstractIntegrationTest {
 
-    static final String SECRET = "test-webhook-secret";
+    static final String SECRET = WEBHOOK_SECRET; // the base context's secret: no extra Spring context
 
     @Autowired private DepositService depositService;
     @Autowired private UserRepository userRepository;

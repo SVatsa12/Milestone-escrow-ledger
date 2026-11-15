@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.TestPropertySource;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -51,11 +50,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * webhook_events rows per payment (one per event id); InvariantChecker clean; reconciliation of the
  * day (both sources) at 0 mismatches.
  */
-@TestPropertySource(properties = "razorpay.webhook-secret=" + C4DuplicateWebhooksChaosIT.SECRET)
 @DisplayName("C4: duplicate webhook storm")
 class C4DuplicateWebhooksChaosIT extends AbstractChaosIT {
 
-    static final String SECRET = "test-webhook-secret";
+    static final String SECRET = WEBHOOK_SECRET; // the base context's secret: no extra Spring context
     private static final Logger log = LoggerFactory.getLogger(C4DuplicateWebhooksChaosIT.class);
 
     private static final int PAYMENTS = 20;

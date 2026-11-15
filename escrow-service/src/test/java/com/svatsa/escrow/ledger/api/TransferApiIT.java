@@ -10,7 +10,6 @@ import com.svatsa.escrow.test.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -31,7 +30,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Each test funds fresh wallets through the ledger and counts only its own journal entries,
  * so it holds on the shared database and leaves the invariants intact.
  */
-@AutoConfigureMockMvc
 class TransferApiIT extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;

@@ -2,6 +2,7 @@
 // 5% payout. Also the load generator for chaos/kill-under-load.sh (K2), which sets
 // DURATION_SEC and ACK_LOG to record every acknowledged Idempotency-Key.
 import http from 'k6/http';
+import exec from 'k6/execution';
 import { Trend, Counter } from 'k6/metrics';
 import { BASE, ADMIN, actor, jsonHeaders, newKey, pick, randInt, baseThresholds, summarize, SUMMARY_TREND_STATS } from './lib/common.js';
 import { setupData } from './lib/setup.js';
@@ -34,6 +35,8 @@ export function setup() {
 }
 
 export default function (data) {
+  // K2 (chaos/kill_under_load.py) starts killing the app only once the measured scenario runs.
+  if (ACK_LOG && exec.scenario.iterationInTest === 0) console.log('MAIN STARTED');
   const roll = Math.random();
   if (roll < 0.6) return read(data);
   if (roll < 0.8) return transfer(data);
@@ -68,18 +71,20 @@ function transfer(data) {
 function approve(data) {
   const p = pick(data.projects);
   const key = newKey('mx-ap');
-  const res = http.post(`${BASE}/api/escrow/milestones/${pick(p.milestoneIds)}/approve`, null,
+  const milestoneId = pick(p.milestoneIds);
+  const res = http.post(`${BASE}/api/escrow/milestones/${milestoneId}/approve`, null,
     Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'approve' } }));
-  ack('approve', key, res);
+  ack('approve', key, res, milestoneId);
 }
 
 function dispute(data) {
   const p = pick(data.projects);
   const key = newKey('mx-ds');
+  const milestoneId = pick(p.milestoneIds);
   const res = http.post(`${BASE}/api/escrow/disputes`,
-    JSON.stringify({ milestoneId: pick(p.milestoneIds), reason: 'k6' }),
+    JSON.stringify({ milestoneId, reason: 'k6' }),
     Object.assign(jsonHeaders(actor(p.clientId, 'CLIENT'), key), { tags: { name: 'dispute' } }));
-  ack('dispute', key, res);
+  ack('dispute', key, res, milestoneId);
 }
 
 function payout(data) {
@@ -92,10 +97,13 @@ function payout(data) {
   ack('payout', key, res);
 }
 
-/** K2 reads these lines from k6's console output: every 2xx is a promise the ledger must keep. */
-function ack(kind, key, res) {
+/**
+ * K2 reads these lines from k6's console output: every 2xx is a promise the ledger must keep.
+ * Approve and dispute also name the milestone, whose business key is what the ledger records.
+ */
+function ack(kind, key, res, target = '') {
   if (ACK_LOG && res.status >= 200 && res.status < 300) {
-    console.log(`ACK ${kind} ${key}`);
+    console.log(`ACK ${kind} ${key} ${target}`.trim());
   }
 }
 

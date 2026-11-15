@@ -225,11 +225,15 @@ class C2ProviderConnectionResetChaosIT extends AbstractChaosIT {
         notes.put("providerNeverPaidOrTombstoned", faultedCalls);
         notes.put("providerPaidPaise", providerPaid);
         notes.put("ledgerConfirmedPaise", confirmedPaise);
+        // Reconcile the scenario's day with both sources, faults off: 0 mismatches is part of passing.
+        removeAllToxics(PROVIDER_PROXY);
+        List<String> mismatches = reconcileToday();
         var file = ChaosResults.write("C2-provider-connection-reset", startedAt,
-            Duration.ofNanos(System.nanoTime() - startNanos).toMillis(), PAYOUTS + passes[0], violations, notes);
+            Duration.ofNanos(System.nanoTime() - startNanos).toMillis(), PAYOUTS + passes[0], violations, mismatches, notes);
         log.info("c2.result file={} violations={} notes={}", file, violations.size(), notes);
 
         assertThat(violations).as("C2 violations").isEmpty();
+        assertThat(mismatches).as("C2 reconciliation mismatches").isEmpty();
         assertThat(afterRequests.getOrDefault(PayoutState.UNKNOWN, 0))
             .as("the faults must actually have produced UNKNOWN payouts, or this scenario proved nothing")
             .isPositive();

@@ -1,0 +1,21 @@
+{
+  "scenario" : "C4-duplicate-webhooks",
+  "startedAt" : "2026-11-15T12:00:30.265677500Z",
+  "durationMs" : 1348,
+  "operations" : 600,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "payments" : 20,
+    "deliveries" : 600,
+    "capturedDeliveriesPerPayment" : 25,
+    "orderPaidDeliveriesPerPayment" : 5,
+    "httpStatuses" : {
+      "200" : 600
+    },
+    "webhookEventRows" : 40
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "scenario" : "C2-provider-connection-reset",
+  "startedAt" : "2026-11-15T11:56:29.657542400Z",
+  "durationMs" : 5216,
+  "operations" : 53,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "statesAfterRequests" : {
+      "PROCESSING" : 5,
+      "UNKNOWN" : 23,
+      "CONFIRMED" : 14,
+      "FAILED" : 8
+    },
+    "finalStates" : {
+      "CONFIRMED" : 23,
+      "FAILED" : 9,
+      "CANCELLED" : 18
+    },
+    "recoveryPasses" : 3,
+    "providerNeverPaidOrTombstoned" : 18,
+    "providerPaidPaise" : 62028,
+    "ledgerConfirmedPaise" : 62028
+  }
+}

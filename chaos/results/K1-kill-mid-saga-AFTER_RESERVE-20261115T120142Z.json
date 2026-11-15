@@ -1,0 +1,26 @@
+{
+  "scenario": "K1-kill-mid-saga-AFTER_RESERVE",
+  "startedAt": "2026-11-15T12:01:42.385452+00:00",
+  "durationMs": 142946,
+  "operations": 1,
+  "violations": 0,
+  "violationDetails": [],
+  "mismatches": 0,
+  "mismatchDetails": [],
+  "result": "PASS",
+  "notes": {
+    "crashPoint": "AFTER_RESERVE",
+    "clientSaw": "RemoteDisconnected",
+    "containerExitCode": 137,
+    "payoutId": "12e6b692-7514-4e8e-bc1f-bd6355aa2ed0",
+    "stateAtCrash": "RESERVED",
+    "providerAtCrash": {
+      "key": "12e6b692-7514-4e8e-bc1f-bd6355aa2ed0",
+      "code": "NOT_FOUND"
+    },
+    "recoverySeconds": 127,
+    "finalState": "CANCELLED",
+    "providerFinal": "CANCELLED",
+    "journalEntries": "PAYOUT_RESERVE,PAYOUT_CANCEL"
+  }
+}

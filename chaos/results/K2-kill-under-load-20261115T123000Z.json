@@ -1,0 +1,25 @@
+{
+  "scenario": "K2-kill-under-load",
+  "startedAt": "2026-11-15T12:30:00.417893+00:00",
+  "durationMs": 13327835,
+  "operations": 2831,
+  "violations": 0,
+  "violationDetails": [],
+  "mismatches": 0,
+  "mismatchDetails": [],
+  "result": "PASS",
+  "notes": {
+    "kills": 5,
+    "killExitCodes": [
+      137
+    ],
+    "k6ExitCode": 99,
+    "acknowledged": {
+      "transfer": 2166,
+      "approve": 117,
+      "dispute": 63,
+      "payout": 485
+    },
+    "payoutStates": "CANCELLED=1 CONFIRMED=488"
+  }
+}

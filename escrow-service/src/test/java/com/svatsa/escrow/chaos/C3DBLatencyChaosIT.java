@@ -213,11 +213,15 @@ class C3DBLatencyChaosIT extends AbstractChaosIT {
             .map(Outcome::lastError).filter(java.util.Objects::nonNull)
             .map(e -> e.length() > 300 ? e.substring(0, 300) : e)
             .distinct().limit(5).toList());
+        // Reconcile the scenario's day with both sources, faults off: 0 mismatches is part of passing.
+        removeAllToxics(PG_PROXY);
+        List<String> mismatches = reconcileToday();
         var file = ChaosResults.write("C3-db-latency-and-drops", startedAt,
-            Duration.ofNanos(System.nanoTime() - startNanos).toMillis(), totalAttempts, violations, notes);
+            Duration.ofNanos(System.nanoTime() - startNanos).toMillis(), totalAttempts, violations, mismatches, notes);
         log.info("c3.result file={} violations={} notes={}", file, violations.size(), notes);
 
         assertThat(violations).as("C3 violations").isEmpty();
+        assertThat(mismatches).as("C3 reconciliation mismatches").isEmpty();
         assertThat(acked)
             .as("most transfers must succeed despite the faults; otherwise the API is just broken")
             .isGreaterThanOrEqualTo(logicals.size() / 2);

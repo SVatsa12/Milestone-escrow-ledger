@@ -66,6 +66,8 @@ class C1ProviderLatencyChaosIT extends AbstractChaosIT {
     @Test
     @DisplayName("timeouts end UNKNOWN, recovery confirms every payout exactly once")
     void latencyThenRecovery() throws Exception {
+        java.time.Instant startedAt = java.time.Instant.now();
+        long startNanos = System.nanoTime();
         long freelancerId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
         long walletId = accountRepository.create("FREELANCER_WALLET:" + freelancerId,
             AccountType.FREELANCER_WALLET, freelancerId, false).id();
@@ -74,6 +76,8 @@ class C1ProviderLatencyChaosIT extends AbstractChaosIT {
 
         // --- Latency on: every answer arrives after the client gave up -----------------------
         PROVIDER_PROXY.toxics().latency("c1-latency", ToxicDirection.DOWNSTREAM, 3_000);
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("c1.toxic-added proxy=provider toxics={}",
+            PROVIDER_PROXY.toxics().getAll().stream().map(t -> t.getName() + ":" + t.getStream()).toList());
         List<UUID> ids = Collections.synchronizedList(new ArrayList<>());
         try (ExecutorService pool = Executors.newFixedThreadPool(WORKERS)) {
             List<Future<?>> calls = new ArrayList<>();
@@ -117,7 +121,17 @@ class C1ProviderLatencyChaosIT extends AbstractChaosIT {
         assertThat(providerSettled).as("provider settled").isEqualTo(PAYOUTS * AMOUNT);
         assertThat(balance("EXTERNAL_BANK:PAYOUTS") - bankBefore).as("ledger confirmed").isEqualTo(PAYOUTS * AMOUNT);
         assertThat(accountRepository.findById(walletId).orElseThrow().balance()).isZero();
-        assertThat(invariantChecker.check()).isEmpty();
+
+        List<String> violations = describe(invariantChecker.check());
+        List<String> mismatches = reconcileToday();
+        java.util.Map<String, Object> notes = new java.util.LinkedHashMap<>();
+        notes.put("payouts", PAYOUTS);
+        notes.put("latencyToxicMs", 3_000);
+        notes.put("providerSettledPaise", providerSettled);
+        ChaosResults.write("C1-provider-latency", startedAt, Duration.ofNanos(System.nanoTime() - startNanos).toMillis(),
+            PAYOUTS, violations, mismatches, notes);
+        assertThat(violations).as("C1 invariants").isEmpty();
+        assertThat(mismatches).as("C1 reconciliation mismatches").isEmpty();
     }
 
     private PayoutState state(UUID id) {

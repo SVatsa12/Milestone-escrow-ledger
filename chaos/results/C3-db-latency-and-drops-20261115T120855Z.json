@@ -1,0 +1,22 @@
+{
+  "scenario" : "C3-db-latency-and-drops",
+  "startedAt" : "2026-11-15T12:08:55.240316Z",
+  "durationMs" : 231582,
+  "operations" : 329,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "logicalTransfers" : 100,
+    "httpAttempts" : 329,
+    "retries" : 229,
+    "acked2xx" : 61,
+    "appliedWithoutAck" : 0,
+    "notApplied" : 39,
+    "connectionDropWindows" : 25,
+    "pgLatencyMs" : "300 +/- 100",
+    "sampleClientErrors" : [ "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"Internal server error\",\"instance\":\"/api/v1/transfers\",\"code\":\"INTERNAL_ERROR\"}" ]
+  }
+}

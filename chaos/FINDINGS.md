@@ -609,3 +609,15 @@ C2 and C3 were real, and no scenario reconciled.
   intervals, so every ~4s transaction overlapped an outage and nothing could succeed. Gave-up
   transfers are expected (5 client attempts take ~2.5s, shorter than a drop window plus
   reconnect) and must have moved no money.
+- **C4:** each payment gets 25 deliveries of one `payment.captured` event id and 5 of its
+  `order.paid`; Razorpay's side (the fake gateway) knows the 20 captured payments so
+  reconciliation compares both directions.
+- **C5:** `docker pause`, not stop: a stopped Testcontainers Kafka comes back on a new random host
+  port and the app's bootstrap address would point nowhere. Paused, the broker accepts no traffic
+  and every send times out, which is the outage the relay has to survive.
+- **C6:** submission times are DB time, so C6 runs on the real day with the clock set to
+  max(submitted_at) + review window, the instant every milestone becomes auto-releasable.
+- **K1:** AFTER_RESERVE ends CANCELLED (the provider never saw the key; recovery tombstones it after
+  2 minutes); AFTER_PROVIDER_CALL ends CONFIRMED (the provider had paid). Each waits up to 5 minutes.
+- **K2:** a kill is sent after 15 s of healthy uptime, not on a strict 15 s clock: the app needs
+  ~20 s to start, so a fixed cadence would keep it down for most of the run.

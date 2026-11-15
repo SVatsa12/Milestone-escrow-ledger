@@ -1,0 +1,21 @@
+{
+  "scenario" : "C5-kafka-outage",
+  "startedAt" : "2026-11-15T12:25:15.954657900Z",
+  "durationMs" : 56051,
+  "operations" : 200,
+  "violations" : 0,
+  "violationDetails" : [ ],
+  "mismatches" : 0,
+  "mismatchDetails" : [ ],
+  "result" : "PASS",
+  "notes" : {
+    "operations" : 200,
+    "succeeded" : 200,
+    "operationsDuringOutage" : 164,
+    "kafkaPausedMs" : 30000,
+    "maxOutboxPendingDuringOutage" : 162,
+    "outboxEvents" : 300,
+    "auditMissing" : 0,
+    "auditDuplicates" : 0
+  }
+}

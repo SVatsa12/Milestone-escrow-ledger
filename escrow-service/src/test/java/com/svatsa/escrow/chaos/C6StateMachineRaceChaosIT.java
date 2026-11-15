@@ -1,196 +1,204 @@
 package com.svatsa.escrow.chaos;
 
+import com.svatsa.escrow.escrow.AutoReleaseJob;
 import com.svatsa.escrow.escrow.EscrowService;
 import com.svatsa.escrow.escrow.MilestoneRepository;
-import com.svatsa.escrow.escrow.MilestoneState;
-import com.svatsa.escrow.ledger.AccountRepository;
-import com.svatsa.escrow.ledger.LedgerService;
-import com.svatsa.escrow.recon.InvariantChecker;
-import com.svatsa.escrow.test.AbstractIntegrationTest;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
+import com.svatsa.escrow.escrow.Project;
+import com.svatsa.escrow.ledger.LedgerKeys;
+import com.svatsa.escrow.test.Actors;
+import com.svatsa.escrow.test.ApiClient;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
-import java.time.Clock;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.svatsa.escrow.test.ApiClient.actor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * C6: State machine race condition chaos test.
+ * C6: approve vs auto-release vs dispute at the review-window boundary.
  *
- * Scenario:
- * - Create 100 milestones at the review-window boundary
- * - Race: client attempts approve, auto-release job attempts release, other party attempts dispute
- * - Each milestone should end in exactly ONE of: RELEASED or DISPUTED
- * - Exactly ONE money movement per milestone (no double-release, no double-dispute)
- * - Invariants must be clean
+ * 100 submitted milestones (10 projects x 10). The clock is set to the exact moment the last one's
+ * review window ends, so every milestone is eligible for auto-release, and then, released by one
+ * latch: for every milestone the client's approve and the freelancer's dispute go out over HTTP
+ * concurrently while 4 threads run AutoReleaseJob in a loop.
  *
- * Tests that the conditional UPDATE in MilestoneStateMachine prevents race conditions.
+ * Pass: every milestone ends in exactly one of RELEASED or DISPUTED, with exactly one money
+ * movement: one RELEASE entry and no DISPUTE_FREEZE, or the other way round. Every HTTP answer is a
+ * success or 409 INVALID_STATE_TRANSITION (never a 5xx). InvariantChecker clean (escrow
+ * conservation included); reconciliation of the day at 0 mismatches.
  */
-@Tag("chaos")
-@Disabled("Requires full escrow setup; enable in CI")
-@SpringBootTest
-@ActiveProfiles("test")
-@DisplayName("C6: State Machine Race Condition Chaos Test")
-class C6StateMachineRaceChaosIT extends AbstractIntegrationTest {
+@DisplayName("C6: approve vs auto-release vs dispute storm")
+class C6StateMachineRaceChaosIT extends AbstractChaosIT {
 
-    @Autowired
-    private EscrowService escrowService;
+    private static final Logger log = LoggerFactory.getLogger(C6StateMachineRaceChaosIT.class);
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
-    @Autowired
-    private MilestoneRepository milestoneRepository;
+    private static final int PROJECTS = 10;
+    private static final int MILESTONES_PER_PROJECT = 10;
+    private static final Duration REVIEW_WINDOW = Duration.ofHours(1);
 
-    @Autowired
-    private AccountRepository accountRepository;
-
-    @Autowired
-    private LedgerService ledgerService;
-
-    @Autowired
-    private Clock clock;
-
-    @Autowired
-    private InvariantChecker invariantChecker;
-
-    private static final int MILESTONE_COUNT = 100;
-    private static final long CLIENT_ID = 200L;
-    private static final long FREELANCER_ID = 201L;
-
-    @BeforeEach
-    void setUp() {
-    }
+    @Autowired private EscrowService escrowService;
+    @Autowired private MilestoneRepository milestoneRepository;
+    @Autowired private AutoReleaseJob autoReleaseJob;
 
     @Test
-    @DisplayName("Should handle concurrent approve/auto-release/dispute without conflicts")
-    void shouldHandleStateMachineRaceConditions() throws Exception {
-        System.out.println("Creating " + MILESTONE_COUNT + " milestones at review-window boundary...");
+    @DisplayName("each of 100 milestones ends RELEASED xor DISPUTED with exactly one money movement")
+    void raceAtTheBoundary() throws Exception {
+        Instant startedAt = Instant.now();
+        long startNanos = System.nanoTime();
+        // Submission times are DB now() (wall clock), so this scenario's day is the real one.
+        clock.reset();
+        ApiClient api = new ApiClient(serverPort);
+        String run = UUID.randomUUID().toString().substring(0, 8);
+        long client = api.createUser("c6-client-" + run, "CLIENT");
+        long freelancer = api.createUser("c6-freelancer-" + run, "FREELANCER");
+        long wallet = jdbcClient.sql("SELECT id FROM accounts WHERE code = ?").param("CLIENT_WALLET:" + client)
+            .query(Long.class).single();
+        api.expect(api.post("/api/v1/admin/deposits/simulate", "c6-dep-" + run, ApiClient.admin(),
+            "{\"clientAccountId\":" + wallet + ",\"amountPaise\":100000000}"), 201);
 
-        AtomicInteger releasedCount = new AtomicInteger(0);
-        AtomicInteger disputedCount = new AtomicInteger(0);
-        AtomicInteger conflictCount = new AtomicInteger(0);
-
-        // Part 1: Create milestones at the exact review-window boundary
-        // (Clock time is now; submitted_at is now - review_window - 1s, so auto-release is eligible)
-        Instant boundaryTime = clock.instant();
-
-        for (int i = 0; i < MILESTONE_COUNT; i++) {
-            // Create milestone with submitted_at at the boundary
-            // (This would be done via escrowService.createProject(), fundProject(), submitMilestone())
-            System.out.println("Created milestone " + (i + 1) + "/" + MILESTONE_COUNT);
+        List<Long> milestones = new ArrayList<>();
+        for (int p = 0; p < PROJECTS; p++) {
+            List<EscrowService.MilestoneSpec> specs = new ArrayList<>();
+            for (int m = 0; m < MILESTONES_PER_PROJECT; m++) {
+                specs.add(new EscrowService.MilestoneSpec("m" + m, 10_000 + 100L * m, Instant.now().plus(Duration.ofDays(30))));
+            }
+            Project project = escrowService.createProject(Actors.client(client), client, freelancer, "c6-" + p, REVIEW_WINDOW, specs);
+            escrowService.fundProject(Actors.client(client), project.id(), "c6-fund-" + run + p);
+            for (var m : milestoneRepository.findByProjectId(project.id())) {
+                escrowService.submitMilestone(Actors.freelancer(freelancer), m.id(), "c6-sub-" + m.id());
+                milestones.add(m.id());
+            }
         }
 
-        // Part 2: Race three concurrent operations on each milestone
-        ExecutorService executor = Executors.newFixedThreadPool(50, Thread.ofVirtual().factory());
-        CountDownLatch startGate = new CountDownLatch(1);
-        CountDownLatch endGate = new CountDownLatch(MILESTONE_COUNT * 3); // 3 operations per milestone
+        // The boundary: the last submission's review window ends exactly now.
+        Instant lastSubmitted = jdbcClient.sql("SELECT max(submitted_at) FROM milestones WHERE id = ANY(?)")
+            .param(milestones.toArray(new Long[0])).query(java.time.OffsetDateTime.class).single().toInstant();
+        clock.set(lastSubmitted.plus(REVIEW_WINDOW));
+        scenarioDay = LocalDate.ofInstant(clock.instant(), IST);
 
-        long startTime = System.currentTimeMillis();
-
-        for (int m = 0; m < MILESTONE_COUNT; m++) {
-            final int milestoneId = m;
-
-            // Operation 1: Client tries to approve
-            executor.submit(() -> {
-                try {
-                    startGate.await();
-                    try {
-                        // escrowService.approveMilestone(clientOfMilestone(milestoneId), milestoneId, CLIENT_ID)
-                        releasedCount.incrementAndGet();
-                    } catch (Exception e) {
-                        // Expected if another operation wins the race
+        // --- The storm ------------------------------------------------------------------------------
+        Map<Integer, Integer> statuses = new ConcurrentHashMap<>();
+        List<String> errors = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicBoolean stormOver = new AtomicBoolean(false);
+        try (ExecutorService pool = Executors.newFixedThreadPool(48)) {
+            List<Future<?>> jobs = new ArrayList<>();
+            for (int j = 0; j < 4; j++) {
+                jobs.add(pool.submit(() -> {
+                    go.await();
+                    while (!stormOver.get()) {
+                        autoReleaseJob.runOnce();
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
-                }
-            });
+                    return null;
+                }));
+            }
+            List<Future<?>> calls = new ArrayList<>();
+            for (long m : milestones) {
+                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/escrow/milestones/" + m + "/approve",
+                    "c6-appr-" + m, actor(client, "CLIENT"), "")));
+                calls.add(pool.submit(() -> call(api, go, statuses, errors, "/api/escrow/disputes",
+                    "c6-disp-" + m, actor(freelancer, "FREELANCER"), "{\"milestoneId\":" + m + ",\"reason\":\"c6\"}")));
+            }
+            go.countDown();
+            for (Future<?> f : calls) {
+                f.get(2, TimeUnit.MINUTES);
+            }
+            stormOver.set(true);
+            for (Future<?> f : jobs) {
+                f.get(1, TimeUnit.MINUTES);
+            }
+        }
+        autoReleaseJob.runOnce();   // anything the storm left SUBMITTED is past its window: release it
 
-            // Operation 2: Auto-release job tries to release
-            executor.submit(() -> {
-                try {
-                    startGate.await();
-                    try {
-                        // autoReleaseJob.claim() → release()
-                        releasedCount.incrementAndGet();
-                    } catch (Exception e) {
-                        // Expected if another operation wins the race
+        // --- Verify ---------------------------------------------------------------------------------
+        List<String> failures = new ArrayList<>(errors);
+        if (!java.util.Set.of(200, 201, 409).containsAll(statuses.keySet())) {
+            failures.add("unexpected HTTP statuses: " + statuses);
+        }
+        int released = 0, disputed = 0, autoReleased = 0;
+        for (long m : milestones) {
+            String state = milestoneRepository.findById(m).orElseThrow().state().name();
+            long releases = entries(LedgerKeys.release(m));
+            long freezes = entries(LedgerKeys.disputeFreeze(m));
+            switch (state) {
+                case "RELEASED" -> {
+                    released++;
+                    if (releases != 1 || freezes != 0) {
+                        failures.add(m + " RELEASED with " + releases + " release / " + freezes + " freeze entries");
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
+                    autoReleased += jdbcClient.sql("SELECT count(*) FROM milestone_transitions WHERE milestone_id = ? "
+                        + "AND to_state = 'RELEASED' AND actor_role = 'SYSTEM'").param(m).query(Integer.class).single();
                 }
-            });
-
-            // Operation 3: Other party tries to dispute
-            executor.submit(() -> {
-                try {
-                    startGate.await();
-                    try {
-                        // disputeService.openDispute(milestoneId, FREELANCER_ID)
-                        disputedCount.incrementAndGet();
-                    } catch (Exception e) {
-                        // Expected if another operation wins the race
+                case "DISPUTED" -> {
+                    disputed++;
+                    if (freezes != 1 || releases != 0) {
+                        failures.add(m + " DISPUTED with " + releases + " release / " + freezes + " freeze entries");
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    endGate.countDown();
                 }
-            });
+                default -> failures.add(m + " ended " + state + ", expected RELEASED or DISPUTED");
+            }
         }
 
-        // Release the start gate
-        startGate.countDown();
+        List<String> violations = new ArrayList<>(failures);
+        violations.addAll(describe(invariantChecker.check()));
+        List<String> mismatches = reconcileToday();
+        int operations = milestones.size() * 2;
 
-        // Wait for all operations to complete
-        endGate.await();
-        long duration = System.currentTimeMillis() - startTime;
+        Map<String, Object> notes = new LinkedHashMap<>();
+        notes.put("milestones", milestones.size());
+        notes.put("released", released);
+        notes.put("releasedByAutoRelease", autoReleased);
+        notes.put("disputed", disputed);
+        notes.put("httpStatuses", statuses);
+        notes.put("boundary", clock.instant().toString());
+        var file = ChaosResults.write("C6-state-machine-race", startedAt,
+            Duration.ofNanos(System.nanoTime() - startNanos).toMillis(), operations, violations, mismatches, notes);
+        log.info("c6.result file={} violations={} mismatches={} notes={}", file, violations.size(), mismatches.size(), notes);
 
-        System.out.println("Race completed in " + duration + "ms:");
-        System.out.println("  Released (approve/auto-release won): " + releasedCount.get());
-        System.out.println("  Disputed: " + disputedCount.get());
+        assertThat(violations).as("C6 violations").isEmpty();
+        assertThat(mismatches).as("C6 reconciliation mismatches").isEmpty();
+        assertThat(released + disputed).isEqualTo(milestones.size());
+    }
 
-        // Part 3: Verify final states
-        // Each milestone should be in exactly one of: RELEASED or DISPUTED
-        int finalReleasedCount = 0;
-        int finalDisputedCount = 0;
-        int otherCount = 0;
-
-        for (int m = 0; m < MILESTONE_COUNT; m++) {
-            // var milestone = milestoneRepository.findById(m)
-            // MilestoneState finalState = milestone.state();
-            // Track the counts (simulated here)
+    private static Void call(ApiClient api, CountDownLatch go, Map<Integer, Integer> statuses, List<String> errors,
+                             String path, String key, String[] actor, String body) throws Exception {
+        go.await();
+        try {
+            HttpResponse<String> r = api.post(path, key, actor, body);
+            statuses.merge(r.statusCode(), 1, Integer::sum);
+            if (r.statusCode() == 409 && !r.body().contains("INVALID_STATE_TRANSITION")) {
+                errors.add(path + " 409 without INVALID_STATE_TRANSITION: " + r.body());
+            }
+        } catch (Exception e) {
+            errors.add(path + ": " + e);
         }
+        return null;
+    }
 
-        System.out.println("Final states: " + finalReleasedCount + " RELEASED, " +
-            finalDisputedCount + " DISPUTED, " + otherCount + " other");
-
-        // All milestones should be terminal
-        assertThat(finalReleasedCount + finalDisputedCount).isEqualTo(MILESTONE_COUNT);
-
-        // No milestone should have both release AND dispute entries
-        // (This would require querying journal_entries by reference_type=MILESTONE)
-
-        // Part 4: Verify invariants
-        var violations = invariantChecker.check();
-        assertThat(violations).isEmpty();
-
-        System.out.println("C6 PASSED: Each milestone terminal in one state, exactly one money movement, invariants clean");
-
-        executor.shutdown();
+    private long entries(String key) {
+        return jdbcClient.sql("SELECT count(*) FROM journal_entries WHERE idempotency_key = ?").param(key)
+            .query(Long.class).single();
     }
 }

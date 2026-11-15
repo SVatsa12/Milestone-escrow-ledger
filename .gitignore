@@ -62,3 +62,6 @@ load/results/raw/
 
 # Prompt playbook stays local
 PROMPTS.md
+
+# chaos/run_all.py writes the raw Maven output of the JUnit chaos suite here
+chaos/results/raw-junit.log

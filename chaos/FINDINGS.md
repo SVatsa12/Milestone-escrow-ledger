@@ -623,6 +623,18 @@ The README audit grepped `main` for AGENTS.md rule breaks. Each one is closed be
     and `Clock.system*()` anywhere in `main` except `ClockConfig`. `X.now(clock)` is allowed, and
     the test also proves the rule catches each forbidden call.
 
+### 47. Notifications formatted rupees through a `double`
+- **Found by:** grepping for `double` near money. `NotificationConsumer` computed
+  `paise / 100.0` and printed it with `%.2f` in three messages (milestone released, and both sides
+  of a dispute resolution). It was display-only, so no stored amount was affected, but a double has
+  no business in the money path, and it can't render lakh/crore grouping.
+- **Fix:** `Money.formatPaise` uses only integer arithmetic (`rupees = paise / 100`,
+  `paise % 100` as two digits) with Indian digit grouping: three digits, then groups of two, so
+  `1,00,00,000` paise is `₹1,00,000.00`. It was already in `Money` but unused, and it overflowed on
+  `Long.MIN_VALUE`; it now takes the absolute value of each part separately.
+- **Regression:** `MoneyTest` covers 0, 5, 100, 99,999 and 1,00,00,000 paise, plus a negative
+  amount, `Long.MAX_VALUE` and `Long.MIN_VALUE`.
+
 ## Open issues (not fixed yet)
 - **The outbox relay's backoff isn't enforced.** `handlePublishFailure` computes a retry time but
   the outbox has no column for it and the claim doesn't filter on one, so a failing row is retried

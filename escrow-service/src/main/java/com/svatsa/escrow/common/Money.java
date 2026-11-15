@@ -26,23 +26,35 @@ public class Money {
     }
 
     /**
-     * Formats paise as a readable string with rupee symbol.
-     * 1000 paise -> "₹10.00"
-     * 50 paise -> "₹0.50"
-     * 1 paise -> "₹0.01"
-     *
-     * @param paise amount in paise
-     * @return formatted string
+     * Formats paise for display, with Indian digit grouping, using only integer arithmetic
+     * (rupees = paise / 100, paise part = paise % 100, always two digits).
+     * <pre>
+     *   0          -> "₹0.00"
+     *   5          -> "₹0.05"
+     *   99999      -> "₹999.99"
+     *   1,00,00,000 -> "₹1,00,000.00"   (lakh / crore grouping: 3 digits, then 2s)
+     * </pre>
+     * Display only: amounts are stored and computed as long paise everywhere else.
      */
     public static String formatPaise(long paise) {
-        if (paise < 0) {
-            return "-₹" + formatPaise(-paise);
+        // Math.abs per part, not on paise itself: -Long.MIN_VALUE overflows.
+        long rupees = Math.abs(paise / 100);
+        long rest = Math.abs(paise % 100);
+        String sign = paise < 0 ? "-" : "";
+        return sign + "₹" + groupIndian(Long.toString(rupees)) + "." + (rest < 10 ? "0" : "") + rest;
+    }
+
+    /** "12345678" -> "1,23,45,678": the last three digits, then groups of two. */
+    private static String groupIndian(String digits) {
+        int n = digits.length();
+        if (n <= 3) {
+            return digits;
         }
-
-        long rupees = paise / 100;
-        long remainingPaise = paise % 100;
-
-        return String.format("₹%d.%02d", rupees, remainingPaise);
+        StringBuilder out = new StringBuilder(digits.substring(n - 3));
+        for (int end = n - 3; end > 0; end -= 2) {
+            out.insert(0, ',').insert(0, digits.substring(Math.max(0, end - 2), end));
+        }
+        return out.toString();
     }
 
     /**

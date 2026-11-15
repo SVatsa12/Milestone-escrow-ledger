@@ -1,6 +1,7 @@
 package com.svatsa.escrow.consumers;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.svatsa.escrow.common.Money;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -119,11 +120,10 @@ public class NotificationConsumer {
         long freelancerNetPaise = amountPaise - feeAmountPaise;
         String milestoneTitle = field(payload, "milestone_title").asText();
 
-        double rupees = freelancerNetPaise / 100.0;
         String body = String.format(
             "Milestone released: \"%s\"\n\n" +
-            "Amount: ₹%.2f",
-            milestoneTitle, rupees
+            "Amount: %s",
+            milestoneTitle, Money.formatPaise(freelancerNetPaise)
         );
 
         notificationRepository.insert(
@@ -165,14 +165,11 @@ public class NotificationConsumer {
         long feeAmountPaise = field(payload, "fee_amount_paise").asLong();
         String milestoneTitle = field(payload, "milestone_title").asText();
 
-        double freelancerRupees = (freelancerSharePaise - feeAmountPaise) / 100.0;
-        double clientRupees = clientSharePaise / 100.0;
-
         // Freelancer notification
         String freelancerBody = String.format(
             "Dispute resolved for milestone: \"%s\"\n\n" +
-            "You received: ₹%.2f",
-            milestoneTitle, freelancerRupees
+            "You received: %s",
+            milestoneTitle, Money.formatPaise(freelancerSharePaise - feeAmountPaise)
         );
         notificationRepository.insert(
             eventId, freelancerId, "EMAIL", "dispute_resolved", freelancerBody
@@ -181,8 +178,8 @@ public class NotificationConsumer {
         // Client notification
         String clientBody = String.format(
             "Dispute resolved for milestone: \"%s\"\n\n" +
-            "Refunded to you: ₹%.2f",
-            milestoneTitle, clientRupees
+            "Refunded to you: %s",
+            milestoneTitle, Money.formatPaise(clientSharePaise)
         );
         notificationRepository.insert(
             eventId, clientId, "EMAIL", "dispute_resolved", clientBody
